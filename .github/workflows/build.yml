@@ -1,0 +1,168 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Publish a GitHub release with this tag (e.g. v0.1.0). Leave empty to just build."
+        required: false
+        default: ""
+
+env:
+  # set for a release (a pushed v* tag, a release made on the website, or a manual run with a tag);
+  # the release is built as that version, so the source doesn't need bumping first
+  RELEASE_TAG: ${{ inputs.release_tag || github.event.release.tag_name || (startsWith(github.ref, 'refs/tags/v') && github.ref_name) || '' }}
+
+jobs:
+  trimui:
+    name: TrimUI package (Brick, Brick Hammer, Brick Pro)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: |
+          if [ -n "$RELEASE_TAG" ]; then
+            # the app compares release tags as dotted numbers, so the tag must be v<numbers>
+            echo "$RELEASE_TAG" | grep -Eq '^v[0-9]+(\.[0-9]+)*$' ||
+              { echo "::error::release tag $RELEASE_TAG should look like v1.2.3"; exit 1; }
+            set -- VERSION="${RELEASE_TAG#v}"
+          fi
+          pip install ziglang==0.14.1
+          make -j"$(nproc)" package "$@"
+          z=build/RadioScan-trimui.zip
+          ls -l $z
+          unzip -l $z | grep -q "Apps/RadioScan/radioscan$"
+          unzip -l $z | grep -q "Apps/RadioScan/launch.sh$"
+          unzip -l $z | grep -q "Apps/RadioScan/config.json$"
+          # the self-updater needs the CA bundle for HTTPS, and VERSION for install.sh
+          unzip -l $z | grep -q "Apps/RadioScan/cacert.pem$"
+          test "$(unzip -p $z Apps/RadioScan/VERSION)" = "$(make -s version "$@")"
+          file build/trimui/radioscan | grep -q "ARM aarch64"
+          # runs on TrimUI OS: its own SDL2, and nothing newer than glibc 2.28
+          readelf -d build/trimui/radioscan | grep -q "libSDL2-2.0.so.0"
+          ! objdump -T build/trimui/radioscan | grep -o "GLIBC_[0-9.]*" | sort -uV | awk -F'[_.]' '$2 > 2 || ($2 == 2 && $3 > 28)' | grep .
+          strings build/trimui/radioscan | grep -qx "/RadioScan-trimui.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RadioScan-trimui
+          path: build/RadioScan-trimui.zip
+
+  release:
+    name: Publish release
+    # runs for: a pushed v* tag, a release created on the website, or a manual run with a tag filled in
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release' || inputs.release_tag != ''
+    needs: [trimui, desktop]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: RadioScan-trimui
+      - name: Check the package was built as this version
+        env:
+          TAG: ${{ env.RELEASE_TAG }}
+        run: |
+          # the app compares the release tag with the version it was built as; a mismatch would offer the update forever
+          v=$(unzip -p RadioScan-trimui.zip Apps/RadioScan/VERSION)
+          [ "$TAG" = "v$v" ] || { echo "::error::tag $TAG doesn't match the package's version $v"; exit 1; }
+      - name: Create GitHub release with the TrimUI package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ env.RELEASE_TAG }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" RadioScan-trimui.zip --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" RadioScan-trimui.zip \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "RadioScan $TAG" \
+              --notes-file .github/release-notes.md \
+              --latest
+          fi
+
+  desktop:
+    name: Desktop build + offline test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libsdl2-dev python3-numpy && pip install lameenc
+      - run: make -j"$(nproc)" desktop
+      - name: Stream + synth test against a local fake Icecast server
+        run: |
+          python3 tools/fake_icecast.py --port 8765 &
+          for i in $(seq 1 60); do curl -s -o /dev/null http://127.0.0.1:8765/list.pls && break; sleep 1; done
+          mkdir -p t && cp Apps/RadioScan/cacert.pem t/
+          printf 'Speech|http://127.0.0.1:8765/list.pls|voice\nMusic|http://127.0.0.1:8765/redirect|music\n' > t/stations.txt
+          RADIOSCAN_DIR=t ./build/desktop/radioscan --render 8 t/out.wav 2>&1 | tee t/log.txt
+          # one voice gets the talk stream and the other the music stream
+          grep -q "voice sense .* (voice)" t/log.txt
+          grep -q "voice sense .* (music)" t/log.txt
+          # mono + clock: the radio on the left, 2 PPQN pulses at 120 BPM on the right, nothing else there
+          RADIOSCAN_DIR=t ./build/desktop/radioscan --render 6 t/clock.wav output=1 bpm=120 clock_ppqn=1 2>/dev/null
+          python3 tools/clockcheck.py t/clock.wav right | tee t/clock.txt
+          grep -Eq "clock out on the right: 24 pulses, mean gap 250.00 ms, width 5.0.* ms, other values 0, sound peak (0\.[1-9]|1)" t/clock.txt
+          RS_FAST=1 RADIOSCAN_DIR=t ./build/desktop/radioscan --render 2 t/clock24.wav output=1 bpm=120 clock_ppqn=5 clock_side=1 2>/dev/null
+          python3 tools/clockcheck.py t/clock24.wav left | tee t/clock24.txt
+          grep -q "clock out on the left: 96 pulses, mean gap 20.83 ms, .* other values 0" t/clock24.txt
+      - name: WAV file voices (24-bit mono from the wav folder, float stereo by absolute path, a bad file)
+        run: |
+          mkdir -p w/wav
+          python3 tools/gen_wav.py w/wav/tone.wav 22050 1 pcm24 220 1.5
+          python3 tools/gen_wav.py w/float.wav 44100 2 float32 330 0.7
+          echo junk > w/bad.wav
+          # on a first run voice A takes the first station and voice B the second (the file found in w/wav)
+          printf 'Float|file://%s/w/float.wav|music\n' "$PWD" > w/stations.txt
+          RS_FAST=1 RADIOSCAN_DIR=w ./build/desktop/radioscan --render 3 w/out.wav 2>&1 | tee w/log.txt
+          grep -q "added 1 .wav file" w/log.txt
+          grep -q "tone|file://wav/tone.wav|sound" w/stations.txt
+          grep -q "OSC A: Playing file (44100 Hz" w/log.txt
+          grep -q "OSC B: Playing file (22050 Hz" w/log.txt
+          grep -Eq "rendered .*peak (0\.[1-9]|1)" w/log.txt
+          printf 'Bad|file://bad.wav\n' > w/stations.txt && rm -rf w/wav
+          RS_FAST=1 RADIOSCAN_DIR=w ./build/desktop/radioscan --render 0.2 w/out.wav 2>&1 | grep -q "OSC A: Not a WAV file"
+      - name: Self-update test against a local fake GitHub
+        run: |
+          mkdir -p rel/Apps/RadioScan && cp -r Apps/RadioScan/. rel/Apps/RadioScan/ && cp build/desktop/radioscan rel/Apps/RadioScan/
+          echo 9.9.9 > rel/Apps/RadioScan/VERSION
+          (cd rel && zip -qr RadioScan-trimui.zip Apps)
+          python3 tools/fake_github.py rel --port 8767 --tag v9.9.9 &
+          for i in $(seq 1 30); do curl -s -o /dev/null http://127.0.0.1:8767/latest.json && break; sleep 1; done
+          mkdir -p u && cp Apps/RadioScan/cacert.pem u/ && echo 'Mine|http://example.com/mine|music' > u/stations.txt
+          RS_UPDATE_API=http://127.0.0.1:8767/latest.json RADIOSCAN_DIR=u ./build/desktop/radioscan --update
+          cmp u/radioscan rel/Apps/RadioScan/radioscan
+          cmp u/launch.sh rel/Apps/RadioScan/launch.sh
+          cmp u/wav/README.txt rel/Apps/RadioScan/wav/README.txt   # files in the wav folder come along too
+          test "$(cat u/VERSION)" = 9.9.9
+          test "$(cat u/stations.txt)" = 'Mine|http://example.com/mine|music'   # the user's stations are kept
+          ! ls u/*.new 2>/dev/null
+      - name: Wi-Fi sync test (two units on this machine)
+        run: |
+          ./build/desktop/radioscan --synctest LEAD 97 6 > lead.txt &
+          sleep 0.5
+          ./build/desktop/radioscan --synctest FOLLOW 120 5 | tee follow.txt
+          wait
+          cat lead.txt
+          grep -q "following 1" follow.txt
+          grep -q "bpm 97.0" follow.txt
+      - name: Wi-Fi sync timing (a simulated slow network)
+        run: ./build/desktop/radioscan --syncsim
+      - name: TrimUI buttons through a virtual joystick
+        run: |
+          mkdir -p j
+          RADIOSCAN_DIR=j SDL_VIDEODRIVER=dummy ./build/desktop/radioscan --joytest | tee j/joy.txt
+          grep -q "joytest: all good" j/joy.txt
+      - name: The whole app for a few seconds (offscreen screen, dummy sound)
+        run: |
+          mkdir -p a && cp Apps/RadioScan/cacert.pem a/
+          SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy RADIOSCAN_DIR=a timeout -s TERM 6 ./build/desktop/radioscan > a/log.txt 2>&1 || true
+          cat a/log.txt
+          grep -q "screen 1024x768" a/log.txt
+          grep -q "audio out: speaker / headphones, 48000 Hz, 1024 frames" a/log.txt
+          grep -q " quit$" a/log.txt

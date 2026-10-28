@@ -1,0 +1,47 @@
+# RadioScan stations: one per line as  Name|URL|category
+# category is voice (talk, news, spoken word), music, or sound (drones, space, nature, scanners).
+# MP3 streams over http:// or https://; .pls and .m3u playlist links also work.
+# A .wav file plays (looped) like a station: file://wav/name.wav is in the app folder, file:///path is absolute.
+# .wav files put in the app's wav folder are added here by themselves.
+# Edit this file on the SD card, or add stations in the app (RADIO page: Y = type URL, R2 = scan directory).
+
+# ---- voices ----
+BBC World Service|http://stream.live.vc.bbcmedia.co.uk/bbc_world_service|voice
+NPR Program Stream|https://npr-ice.streamguys1.com/live.mp3|voice
+France Culture|http://icecast.radiofrance.fr/franceculture-midfi.mp3|voice
+France Inter|http://icecast.radiofrance.fr/franceinter-midfi.mp3|voice
+Deutschlandfunk|https://st01.sslstream.dlf.de/dlf/01/128/mp3/stream.mp3|voice
+Resonance FM London|https://stream.resonance.fm/resonance|voice
+SomaFM Mission Control (NASA comms)|http://ice1.somafm.com/missioncontrol-128-mp3|voice
+SomaFM SF 10-33 (scanner + ambient)|http://ice1.somafm.com/sf1033-128-mp3|voice
+
+# ---- sound ----
+SomaFM Drone Zone|http://ice1.somafm.com/dronezone-128-mp3|sound
+SomaFM Deep Space One|http://ice1.somafm.com/deepspaceone-128-mp3|sound
+SomaFM Space Station Soma|http://ice1.somafm.com/spacestation-128-mp3|sound
+SomaFM The Dark Zone|http://ice1.somafm.com/darkzone-128-mp3|sound
+SomaFM Synphaera|http://ice1.somafm.com/synphaera-128-mp3|sound
+Ambient Sleeping Pill|http://radio.stereoscenic.com/asp-s|sound
+
+# ---- music ----
+SomaFM Groove Salad|http://ice1.somafm.com/groovesalad-128-mp3|music
+SomaFM Lush|http://ice1.somafm.com/lush-128-mp3|music
+SomaFM cliqhop idm|http://ice1.somafm.com/cliqhop-128-mp3|music
+SomaFM n5MD|http://ice1.somafm.com/n5md-128-mp3|music
+SomaFM Sonic Universe|http://ice1.somafm.com/sonicuniverse-128-mp3|music
+SomaFM Secret Agent|http://ice1.somafm.com/secretagent-128-mp3|music
+SomaFM Folk Forward|http://ice1.somafm.com/folkfwd-128-mp3|music
+SomaFM ThistleRadio|http://ice1.somafm.com/thistle-128-mp3|music
+SomaFM Vaporwaves|http://ice1.somafm.com/vaporwaves-128-mp3|music
+Radio Paradise Main Mix|http://stream.radioparadise.com/mp3-128|music
+Radio Paradise Mellow Mix|http://stream.radioparadise.com/mellow-128|music
+FIP|http://icecast.radiofrance.fr/fip-midfi.mp3|music
+FIP Jazz|http://icecast.radiofrance.fr/fipjazz-midfi.mp3|music
+FIP Electro|http://icecast.radiofrance.fr/fipelectro-midfi.mp3|music
+FIP Monde|http://icecast.radiofrance.fr/fipworld-midfi.mp3|music
+Radio Swiss Classic|http://stream.srg-ssr.ch/m/rsc_de/mp3_128|music
+Radio Swiss Jazz|http://stream.srg-ssr.ch/m/rsj/mp3_128|music
+KEXP Seattle|https://kexp-mp3-128.streamguys1.com/kexp128.mp3|music
+WFMU Freeform|http://stream0.wfmu.org/freeform-128k|music
+Nightride FM|https://stream.nightride.fm/nightride.mp3|music
+SLAY Radio (C64 remixes)|http://relay3.slayradio.org:8000/|music
