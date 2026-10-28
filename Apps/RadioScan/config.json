@@ -1,0 +1,6 @@
+{
+"label":"RadioScan",
+"icon":"icon.png",
+"launch":"launch.sh",
+"description":"Internet radio synthesizer (MENU twice to exit)"
+}

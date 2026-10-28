@@ -1,0 +1,8 @@
+build/
+Apps/RadioScan/radioscan
+Apps/RadioScan/settings.cfg
+Apps/RadioScan/log.txt
+Apps/RadioScan/VERSION
+*.o
+*.wav
+__pycache__/
