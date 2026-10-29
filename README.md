@@ -1,6 +1,7 @@
 # RadioScan
 
-A rhythm instrument for the **TrimUI Brick**, **Brick Hammer** and **Brick Pro** (TrimUI OS) played with **internet radio** (or your own
+A rhythm instrument for the **TrimUI Brick**, **Brick Hammer** and **Brick Pro** (TrimUI OS or
+[MustardOS](https://muos.dev)) played with **internet radio** (or your own
 **.wav files**). Two stations become two voices. Each voice is opened and closed by its own Euclidean rhythm, the two can
 cross-modulate each other (vocode, FM, ring mod, spectral morph), and the result runs through a filter,
 a wavefolder, echo and space.
@@ -138,15 +139,37 @@ and the five stages, with the stage you're editing ringed.
 
 ## Install
 
+Each release has one package for each firmware, and each works on the Brick, Brick Hammer and Brick Pro:
+`RadioScan-trimui.zip` for TrimUI OS and `RadioScan-mustardos.muxapp` for MustardOS.
+
+### TrimUI OS
+
 1. Download `RadioScan-trimui.zip` from the latest [Release](../../releases) (or the `RadioScan-trimui` artifact
    of an [Actions build](../../actions)).
 2. Unzip it at the root of the SD card. It holds `Apps/RadioScan/`, so you end up with
    `/mnt/SDCARD/Apps/RadioScan/launch.sh`.
 3. Turn Wi-Fi on in TrimUI OS, then open **Apps → RadioScan**. Press MENU twice to quit.
 
-The same zip works on the Brick, Brick Hammer and Brick Pro.
+### MustardOS
 
-Or, with the TrimUI's SSH server on, run this on a computer on the same network:
+1. Download `RadioScan-mustardos.muxapp` from the latest [Release](../../releases).
+2. Copy it into the `ARCHIVE` folder at the root of the first SD card (SD1).
+3. On the device, open **Applications → Archive Manager** and install it. It lands in
+   `MUOS/application/RadioScan` (on SD2 if you have one, else SD1).
+4. Turn Wi-Fi on, then open **Applications → RadioScan**. Press MENU twice to quit.
+
+By hand instead: unzip the `.muxapp` (it is a zip) and copy its `RadioScan` folder into `MUOS/application/` on the
+card. RadioScan reads MustardOS's own controller and tells the Brick from the Brick Pro by it, so the buttons are as
+labelled whatever A/B layout MustardOS is set to; `log.txt` names the controller it found. On the Brick Pro the
+screen can stay dark after an app opens under MustardOS (it plays, but nothing shows until the power button sleeps
+and wakes the device), so once its window is up RadioScan runs `wake_screen.sh`, which does what MustardOS does on
+waking: the framebuffer blanked and unblanked, and the saved brightness applied again. `RS_SCREEN_WAKE=` (empty) in
+`mux_launch.sh` turns it off.
+
+### Over Wi-Fi
+
+With the TrimUI's SSH server on (on MustardOS, Secure Shell under Web Services), run this on a computer on the same
+network:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/sydilaxe/Trimui-RadioScan-dev/main/install.sh | bash
@@ -154,7 +177,8 @@ curl -fsSL https://raw.githubusercontent.com/sydilaxe/Trimui-RadioScan-dev/main/
 
 The script finds the TrimUI by scanning the local /24 for an SSH server (dropbear first). It checks the installed
 version against the latest [release](../../releases), and if the release is newer it copies it to
-`SD:/Apps/RadioScan`. Your `stations.txt` and `settings.cfg` are kept. Run it again any time to update. The address
+`SD:/Apps/RadioScan`, or on MustardOS (which it tells apart by itself) to its application folder. Your
+`stations.txt` and `settings.cfg` are kept. Run it again any time to update. The address
 that worked is saved in `~/.config/radioscan-trimui/host`. To skip the scan, set `RS_HOST`:
 
 ```sh
@@ -164,13 +188,14 @@ curl -fsSL https://raw.githubusercontent.com/sydilaxe/Trimui-RadioScan-dev/main/
 `RS_USER` changes the SSH user (`root` by default). `RS_FORCE=1` reinstalls even when the version matches. Quit
 RadioScan on the TrimUI before updating.
 
-With the card mounted on a computer, `make install SD=/path/to/card` copies the built app into `Apps/`.
+With the card mounted on a computer, `make install SD=/path/to/card` copies the built app into `Apps/`
+(`OS=mustardos`: into `MUOS/application/`).
 
 ### Updating from the TrimUI
 
 Once it's installed, RadioScan keeps itself up to date. A few seconds after it starts, it asks GitHub for the
 latest release (retrying each minute, up to five times, while Wi-Fi comes up). When there's a newer one it asks
-**A update and restart / B not now**. A downloads the release's `RadioScan-trimui.zip` (about 1 MB) while the radio
+**A update and restart / B not now**. A downloads the release's package for this firmware (about 1 MB) while the radio
 keeps playing, checks every file, swaps them in and starts the new version. Your stations and settings stay as they
 are. If anything goes wrong on the way, nothing is changed. B asks again next time you open the app. `RS_UPDATE=0`
 in `launch.sh` turns the check off. An update replaces `launch.sh`, so set any of its switches again afterwards.
@@ -315,7 +340,7 @@ stand-in for the device's own `libSDL2-2.0.so.0` (TrimUI OS ships the real one),
 ```sh
 pip install ziglang==0.14.1     # or put zig 0.14 on the PATH, or pass ZIG=/path/to/zig
 make package
-# -> build/trimui/radioscan and build/RadioScan-trimui.zip
+# -> build/trimui/radioscan, build/RadioScan-trimui.zip and build/RadioScan-mustardos.muxapp
 ```
 
 Desktop build for development (needs the SDL2 dev files, e.g. `libsdl2-dev`):
@@ -337,12 +362,17 @@ It opens a 1024x768 window, as on the Brick. Keyboard on desktop, the Miyoo's ke
 
 On the TrimUI the buttons arrive as a joystick: B 0, A 1, Y 2, X 3, L1 4, R1 5, SELECT 6, START 7, MENU 8, the
 d-pad as hat 0, and L2 and R2 as axes 2 and 5 (TrimUI OS, NextUI and MinUI agree). The Brick Pro's left stick
-(axes 0 and 1) works as a second d-pad. If a firmware numbers them differently, `RS_JOYMAP=A=1,B=0,...` in
-`launch.sh` remaps them; a button RadioScan doesn't know is noted in `log.txt` when pressed.
+(axes 0 and 1) works as a second d-pad. MustardOS gives its own "muOS-Keys" controller instead, numbered as in
+its `device/tui-brick*` maps (different on the Brick and the Brick Pro, with L2 and R2 as buttons); RadioScan reads
+it when it is there and ignores the TrimUI's controller underneath. If a firmware numbers them differently,
+`RS_JOYMAP=A=1,B=0,...` in `launch.sh` remaps them; a button RadioScan doesn't know is noted in `log.txt` when
+pressed. The same binary goes into both packages; it updates from the MustardOS package when its folder has
+`mux_launch.sh` (`mustardos/`), which only that package carries.
 
 ### Releasing
 
-Any of these builds, tests and publishes a GitHub Release with `RadioScan-trimui.zip` attached (notes come from
+Any of these builds, tests and publishes a GitHub Release with `RadioScan-trimui.zip` and
+`RadioScan-mustardos.muxapp` attached (notes come from
 `.github/release-notes.md`). The release is built as the version in its tag (`make VERSION=0.2.0`), which the app
 compares with newer release tags, so there's no need to bump the source first. The tag must look like `v1.2.3`.
 `RS_VERSION` in `src/update.h` is only the version of untagged builds; keep it at the latest release.
@@ -363,7 +393,7 @@ It reports level, the voice/music verdict for each stream, and DSP cost.
 whether it found peers, who led and how far apart the units ended up. Run two or more on the same network.
 
 `radioscan --joytest` (desktop builds) drives the TrimUI's button, hat, trigger and stick numbers through SDL's
-virtual joystick and checks what the app does with each.
+virtual joystick and checks what the app does with each, then does the same with a MustardOS Brick Pro controller.
 
 `radioscan --update [--force]` checks for a newer release and installs it into `RADIOSCAN_DIR`, the way the app
 does. `tools/fake_github.py` serves a local zip as GitHub's latest release, redirect and all; point
@@ -393,6 +423,33 @@ governor back afterwards), as the other TrimUI ports do. It has a few optional s
   back in).
 - `RS_UPDATE`: set it to 0 to stop RadioScan checking GitHub for updates (on by default on the TrimUI, off on
   the desktop).
+- `RS_LOG`: the performance log in `log.txt`: 1 (the default) a status line every 10 s, 2 every second and every
+  button press, 0 off. `RS_SYSINFO=0`: no `sysinfo.txt`.
+
+## Logs and tuning
+
+Two files in the app folder tell you how RadioScan runs on your device, Brick or Brick Pro:
+
+- **`log.txt`**, written by the app. At start: the firmware and board, the processor's governor and clock range,
+  the memory, the screen, the controllers found (and which numbering is used), the sound device and buffer, and how
+  long start-up took. Then what you do and what the stations do, time-stamped (presses, settings as they settle,
+  stations connecting and failing, late audio buffers), and a **STAT** line every 10 seconds:
+
+  ```
+     30.512 STAT  audio load avg 6% peak 14% | dropouts 0 | gap max 22.0 ms (buffer 21.3) | 47 calls/s | screen 30 fps, avg 7.2 ms max 11.8 ms | cpu 1800 MHz 49 C cores 0-3 load 0.80
+  ```
+
+  *audio load* is the time spent making sound against the time it lasts (over 60%, crackles are near); *dropouts*
+  count the times the sound device ran dry (a crackle each); *gap max* is the longest wait between two buffers.
+  **HINT** lines say what to change, such as `RS_BUFFER=2048` when the load is high or there were dropouts, or that
+  the processor was slowed down or is hot. At quit an **END** line sums up the session's worst figures.
+- **`sysinfo.txt`**, written by `sysinfo.sh` from `launch.sh`: the firmware, the processor, memory, sound, USB,
+  input and network devices and the processes running at start, then every 10 seconds the system load, clock,
+  temperature and the busiest processes.
+
+`RS_LOG=2` writes the STAT line every second and logs every button, hat, trigger and stick move as the controller
+sends it and as RadioScan reads it: the way to check a firmware's button numbering. Both files are rewritten each
+time RadioScan starts.
 
 ## Performance
 
