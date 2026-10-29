@@ -11,12 +11,24 @@
 #include "net.h"
 
 #define API_LATEST "https://api.github.com/repos/" RS_REPO "/releases/latest"
-#define ASSET "RadioScan-trimui.zip"
-#define ZIP_DIR "Apps/RadioScan/" /* as TrimUI OS lists apps */
 #define MAX_ZIP (32L << 20)
 
 static UpdateStatus us;
 static char install_dir[1024];
+/* "/" and the release file's name, so the name can be matched at the end of a URL */
+static const char *asset_path = "/" RS_ASSET, *zip_dir = RS_ZIP_DIR;
+
+int update_detect_package(const char *app_dir)
+{
+    char path[1100];
+    snprintf(path, sizeof path, "%s/" RS_MUSTARD_LAUNCHER, app_dir);
+    int mustard = access(path, F_OK) == 0;
+    asset_path = mustard ? "/" RS_ASSET_MUSTARD : "/" RS_ASSET;
+    zip_dir = mustard ? RS_ZIP_DIR_MUSTARD : RS_ZIP_DIR;
+    return mustard;
+}
+
+const char *update_asset(void) { return asset_path + 1; }
 
 const UpdateStatus *update_status(void) { return &us; }
 
@@ -77,15 +89,15 @@ int update_check(void)
     json_string(body, "tag_name", tag, sizeof tag);
     us.url[0] = 0;
     for (const char *p = body; (p = json_string(p, "browser_download_url", url, sizeof url));) {
-        size_t l = strlen(url), a = strlen("/" ASSET);
-        if (l >= a && !strcmp(url + l - a, "/" ASSET)) {
+        size_t l = strlen(url), a = strlen(asset_path);
+        if (l >= a && !strcmp(url + l - a, asset_path)) {
             snprintf(us.url, sizeof us.url, "%s", url);
             break;
         }
     }
     free(body);
     if (!tag[0] || !us.url[0]) {
-        snprintf(us.err, sizeof us.err, "update check: no %s in the latest release", ASSET);
+        snprintf(us.err, sizeof us.err, "update check: no %s in the latest release", update_asset());
         set_state(UP_CHECK_FAILED);
         return -1;
     }
@@ -402,8 +414,8 @@ int update_unzip(const unsigned char *zip, long len, const char *dir, char *err,
         name[nlen] = 0;
         cd += 46 + nlen + rd16(h + 30) + rd16(h + 32);
 
-        const char *rel = name + strlen(ZIP_DIR);
-        if (strncmp(name, ZIP_DIR, strlen(ZIP_DIR)) || !*rel || name[nlen - 1] == '/') continue; /* folders */
+        const char *rel = name + strlen(zip_dir);
+        if (strncmp(name, zip_dir, strlen(zip_dir)) || !*rel || name[nlen - 1] == '/') continue; /* folders */
         /* the app is flat apart from one level of folders (wav/) */
         const char *slash = strchr(rel, '/');
         if (strstr(rel, "..") || strchr(rel, '\\') || slash == rel || (slash && strchr(slash + 1, '/'))) continue;
@@ -441,7 +453,7 @@ int update_unzip(const unsigned char *zip, long len, const char *dir, char *err,
         snprintf(names[nfiles++], sizeof names[0], "%s", rel);
         if (!strcmp(rel, "radioscan")) have_bin = 1;
     }
-    if (!have_bin) { snprintf(err, errlen, "the zip has no Apps/RadioScan/radioscan"); goto out; }
+    if (!have_bin) { snprintf(err, errlen, "the zip has no %sradioscan", zip_dir); goto out; }
     for (int i = 0; i < nfiles; i++) {
         char path[1300], tmp[1310];
         if (snprintf(path, sizeof path, "%s/%s", dir, names[i]) >= (int)sizeof path) continue; /* can't happen: checked above */
