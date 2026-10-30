@@ -1,8 +1,12 @@
 /* Performance log: see perflog.h. Shared by HI5 and RadioScan; keep the
  * copies the same. */
+#define _GNU_SOURCE
 #include "perflog.h"
 
+#include <dirent.h>
+#include <math.h>
 #include <stdarg.h>
+#include <sys/syscall.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -35,7 +39,7 @@ static uint64_t s_us_sum, s_us_max, s_first; /* s_first: the first frame, so sta
 static void (*before_stat)(void);
 
 /* the session's worst, for the END line */
-static uint32_t w_late, w_gap, w_mhz_min, w_mhz_max;
+static uint32_t w_late, w_gap, w_mhz_min, w_mhz_max, w_jumps;
 static double w_peak, w_load;
 static long w_temp = -1;
 static uint64_t w_frame;
@@ -181,9 +185,16 @@ void perf_audio_rt(int on)
     a_rt = on;
 }
 
+/* the audio thread's id, for its switches in PROC; callbacks that came late
+ * (over one and a half buffers after the last), dropout or not */
+static volatile int a_tid;
+static uint32_t a_slow;
+
 uint64_t perf_audio_begin(int frames)
 {
     uint64_t t = perf_now_us();
+    if (!AT(a_tid))
+        SET(a_tid, (int)syscall(SYS_gettid));
     uint64_t buf_us = (uint64_t)frames * 1000000ULL / (uint64_t)a_rate;
     if (AT(a_reset)) {
         SET(a_reset, 0);
@@ -199,6 +210,8 @@ uint64_t perf_audio_begin(int frames)
     }
     if (a_prev) {
         uint32_t gap = (uint32_t)(t - a_prev);
+        if (gap * 2 > buf_us * 3)
+            ADD(a_slow, 1);
         if (gap > AT(a_gap_max))
             SET(a_gap_max, gap);
     }
@@ -217,6 +230,60 @@ void perf_audio_end(uint64_t t0)
         SET(a_us_max, spent);
 }
 
+/* JUMP: a click is an isolated sharp turn in the output: its second
+ * difference (how sharply it turns) far above the sharpest of the last
+ * ~50 ms, and the sound just after it smooth again (a step or a lone bad
+ * sample, as a gap or a cut leaves). A drum, a burst of noise or a crushed
+ * sound turns sharply and stays rough, and a square wave's edges come again
+ * and again, so neither counts. Checked across buffers too, where a gap
+ * would land. */
+#define J_AFTER 72 /* samples looked at after a candidate: 1.5 ms at 48 kHz */
+static float j_prev[2][2], j_pk = 1.f; /* the decaying peak (starts high: no jump at the very start) */
+static float j_cand, j_cand_typ, j_after_sum;
+static int j_after_left = -1, j_skip;
+static uint32_t j_count, j_logged_at_s = UINT32_MAX;
+static volatile float j_size, j_typ;
+static volatile uint32_t j_when_ms, j_new;
+
+static void jump_found(float size, float typ)
+{
+    ADD(j_count, 1);
+    uint32_t ms = (uint32_t)((perf_now_us() - t_start) / 1000);
+    if (ms / 1000 != j_logged_at_s) { /* at most one a second for the log */
+        j_logged_at_s = ms / 1000;
+        j_size = size, j_typ = typ, j_when_ms = ms;
+        __atomic_store_n(&j_new, 1, __ATOMIC_RELEASE);
+    }
+}
+
+void perf_audio_output(const int16_t *s, int frames)
+{
+    float pk = j_pk;
+    for (int i = 0; i < frames; i++) {
+        float d = 0.f; /* the sharper channel's turn */
+        for (int c = 0; c < 2; c++) {
+            float x = s[i * 2 + c] / 32768.f;
+            float dc = fabsf(x - 2.f * j_prev[c][1] + j_prev[c][0]);
+            j_prev[c][0] = j_prev[c][1], j_prev[c][1] = x;
+            if (dc > d)
+                d = dc;
+        }
+        if (j_after_left >= 0) { /* after a candidate: is the sound smooth again? */
+            if (j_skip > 0)
+                j_skip--; /* a step turns twice, the second the other way: not counted */
+            else
+                j_after_sum += d;
+            if (--j_after_left < 0 && j_after_sum / (J_AFTER - 2) < j_cand * 0.06f)
+                jump_found(j_cand, j_cand_typ);
+        }
+        else if (d > 0.2f && d > 4.f * pk) {
+            j_cand = d, j_cand_typ = pk, j_after_sum = 0.f, j_after_left = J_AFTER, j_skip = 2;
+        }
+        pk = d > pk ? d : pk * 0.99971f; /* half its height in ~50 ms at 48 kHz */
+    }
+    j_pk = pk;
+}
+
 void perf_before_stat(void (*fn)(void)) { before_stat = fn; }
 
 void perf_frame(uint64_t us)
@@ -227,6 +294,140 @@ void perf_frame(uint64_t us)
     s_us_sum += us;
     if (us > s_us_max)
         s_us_max = us;
+}
+
+/* ------------------------------------------------------------------ PROC */
+
+static long ticks_hz;
+#define NTHREAD 48
+static struct {
+    int tid;
+    unsigned long ticks;
+} th_prev[NTHREAD];
+static int th_nprev;
+static unsigned long p_prev_ticks, p_prev_minflt, p_prev_majflt, a_prev_invol, a_prev_vol;
+
+/* a thread's (or the process's) name and its user + system ticks; the faults
+ * too for the process */
+static int read_stat(const char *path, char *name, int n, unsigned long *ticks, unsigned long *minflt,
+                     unsigned long *majflt)
+{
+    char b[512];
+    FILE *f = fopen(path, "r");
+    if (!f)
+        return 0;
+    size_t r = fread(b, 1, sizeof b - 1, f);
+    fclose(f);
+    b[r] = 0;
+    char *l = strchr(b, '('), *rp = strrchr(b, ')');
+    if (!l || !rp)
+        return 0;
+    snprintf(name, (size_t)n, "%.*s", (int)(rp - l - 1), l + 1);
+    /* after ") ": state ppid pgrp session tty tpgid flags minflt cminflt majflt cmajflt utime stime */
+    unsigned long v[13];
+    if (sscanf(rp + 2, "%*c %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu", &v[0], &v[1], &v[2], &v[3], &v[4],
+               &v[5], &v[6], &v[7], &v[8], &v[9], &v[10], &v[11]) < 12)
+        return 0;
+    if (minflt)
+        *minflt = v[6];
+    if (majflt)
+        *majflt = v[8];
+    *ticks = v[10] + v[11];
+    return 1;
+}
+
+static long status_kb(const char *path, const char *key)
+{
+    char line[128];
+    long v = -1;
+    size_t k = strlen(key);
+    FILE *f = fopen(path, "r");
+    if (!f)
+        return -1;
+    while (fgets(line, sizeof line, f))
+        if (!strncmp(line, key, k) && line[k] == ':') {
+            v = atol(line + k + 1);
+            break;
+        }
+    fclose(f);
+    return v;
+}
+
+static void proc_line(double secs)
+{
+    if (secs <= 0)
+        return;
+    if (!ticks_hz)
+        ticks_hz = sysconf(_SC_CLK_TCK) > 0 ? sysconf(_SC_CLK_TCK) : 100;
+    double per = 100.0 / (ticks_hz * secs); /* ticks to % of one core */
+    char name[32];
+    unsigned long ticks, minflt = 0, majflt = 0;
+    double app = -1;
+    if (read_stat("/proc/self/stat", name, sizeof name, &ticks, &minflt, &majflt)) {
+        if (p_prev_ticks)
+            app = (ticks - p_prev_ticks) * per;
+        p_prev_ticks = ticks;
+    }
+    /* the busiest threads */
+    struct {
+        double pc;
+        char name[20];
+    } top[4] = {{-1, ""}, {-1, ""}, {-1, ""}, {-1, ""}};
+    int nnew = 0;
+    typeof(th_prev[0]) now_th[NTHREAD];
+    DIR *d = opendir("/proc/self/task");
+    struct dirent *e;
+    while (d && (e = readdir(d)) && nnew < NTHREAD) {
+        int tid = atoi(e->d_name);
+        if (tid <= 0)
+            continue;
+        char path[64];
+        snprintf(path, sizeof path, "/proc/self/task/%d/stat", tid);
+        if (!read_stat(path, name, sizeof name, &ticks, NULL, NULL))
+            continue;
+        now_th[nnew].tid = tid, now_th[nnew].ticks = ticks, nnew++;
+        for (int i = 0; i < th_nprev; i++)
+            if (th_prev[i].tid == tid) {
+                double pc = (ticks - th_prev[i].ticks) * per;
+                for (int k = 0; k < 4; k++)
+                    if (pc > top[k].pc) {
+                        memmove(&top[k + 1], &top[k], sizeof top[0] * (size_t)(3 - k));
+                        top[k].pc = pc;
+                        snprintf(top[k].name, sizeof top[k].name, "%s%s", tid == AT(a_tid) ? "audio:" : "", name);
+                        break;
+                    }
+            }
+    }
+    if (d)
+        closedir(d);
+    memcpy(th_prev, now_th, sizeof now_th[0] * (size_t)nnew);
+    th_nprev = nnew;
+    if (app < 0)
+        return; /* the first: a baseline */
+    char threads[160] = "";
+    for (int k = 0; k < 4 && top[k].pc >= 0; k++)
+        snprintf(threads + strlen(threads), sizeof threads - strlen(threads), "%s%s %.0f%%", k ? ", " : "",
+                 top[k].name, top[k].pc);
+    /* the audio thread's switches: voluntary (it waited for the device) and
+     * involuntary (something else ran instead) */
+    char sw[64] = "";
+    if (AT(a_tid)) {
+        char path[64];
+        snprintf(path, sizeof path, "/proc/self/task/%d/status", AT(a_tid));
+        long vol = status_kb(path, "voluntary_ctxt_switches"), inv = status_kb(path, "nonvoluntary_ctxt_switches");
+        if (vol >= 0 && inv >= 0) {
+            if (a_prev_vol)
+                snprintf(sw, sizeof sw, " | audio thread waited %ld, preempted %ld", vol - (long)a_prev_vol,
+                         inv - (long)a_prev_invol);
+            a_prev_vol = (unsigned long)vol, a_prev_invol = (unsigned long)inv;
+        }
+    }
+    long rss = status_kb("/proc/self/status", "VmRSS"), hwm = status_kb("/proc/self/status", "VmHWM");
+    long avail = status_kb("/proc/meminfo", "MemAvailable");
+    perf_log("PROC", "cpu %.0f%% (%s) | memory %.1f MB, peak %.1f | faults %lu major, %lu minor | free %ld MB%s", app,
+             threads, rss / 1024.0, hwm / 1024.0, p_prev_majflt ? majflt - p_prev_majflt : 0,
+             p_prev_minflt ? minflt - p_prev_minflt : 0, avail / 1024, sw);
+    p_prev_minflt = minflt, p_prev_majflt = majflt;
 }
 
 static int hint_due(int h, uint64_t now)
@@ -240,6 +441,7 @@ static int hint_due(int h, uint64_t now)
 static void status(uint64_t now, double secs)
 {
     uint32_t calls = TAKE(a_calls), late = TAKE(a_late), us_max = TAKE(a_us_max), gap = TAKE(a_gap_max);
+    uint32_t slow = TAKE(a_slow), jumps = TAKE(j_count);
     uint64_t us_sum = TAKE(a_us_sum), frames = TAKE(a_frames);
     double made_us = frames * 1e6 / a_rate;                      /* the sound those callbacks made */
     double load = made_us > 0 ? 100.0 * us_sum / made_us : 0;    /* of the time it lasts */
@@ -260,13 +462,16 @@ static void status(uint64_t now, double secs)
         before_stat();
 
     perf_log("STAT",
-             "audio load avg %.0f%% peak %.0f%% | dropouts %u | gap max %.1f ms (buffer %.1f) | %.0f calls/s | "
-             "screen %.0f fps, avg %.1f ms max %.1f ms | %s cores %s load %s",
-             load, peak, late, gap / 1000.0, buf_us / 1000.0, secs > 0 ? calls / secs : 0, fps, frame_avg,
+             "audio load avg %.0f%% peak %.0f%% | dropouts %u, late calls %u, jumps %u | gap max %.1f ms (buffer %.1f) | "
+             "%.0f calls/s | screen %.0f fps, avg %.1f ms max %.1f ms | %s cores %s load %s",
+             load, peak, late, slow, jumps, gap / 1000.0, buf_us / 1000.0, secs > 0 ? calls / secs : 0, fps, frame_avg,
              s_us_max / 1000.0, cpu, cores[0] ? cores : "?", loadavg[0] ? loadavg : "?");
+
+    proc_line(secs);
 
     /* the session's worst */
     w_late += late;
+    w_jumps += jumps;
     if (gap > w_gap)
         w_gap = gap;
     if (peak > w_peak)
@@ -310,6 +515,9 @@ void perf_tick(void)
 {
     if (level == PERF_OFF)
         return;
+    if (__atomic_exchange_n(&j_new, 0, __ATOMIC_ACQUIRE))
+        perf_log("JUMP", "at %.2f s the output jumped %.3f (typically %.4f): a click made inside the app",
+                 j_when_ms / 1000.0, j_size, j_typ);
     uint64_t now = perf_now_us(), every = level == PERF_DETAIL ? 1000000ULL : 10000000ULL;
     if (now - t_last_stat >= every) {
         status(now, (now - t_last_stat) / 1e6);
@@ -318,6 +526,7 @@ void perf_tick(void)
 }
 
 uint32_t perf_dropouts(void) { return w_late + AT(a_late); }
+uint32_t perf_jumps(void) { return w_jumps + AT(j_count); }
 
 void perf_close(void)
 {
@@ -330,7 +539,7 @@ void perf_close(void)
         snprintf(cpu, sizeof cpu, ", cpu %u-%u MHz", w_mhz_min, w_mhz_max);
     if (w_temp >= 0)
         snprintf(cpu + strlen(cpu), sizeof cpu - strlen(cpu), ", max %ld C", w_temp);
-    perf_log("END", "session %.0f s: dropouts %u, audio load worst avg %.0f%% peak %.0f%%, gap max %.1f ms, "
+    perf_log("END", "session %.0f s: dropouts %u, jumps %u, audio load worst avg %.0f%% peak %.0f%%, gap max %.1f ms, "
                     "screen max %.1f ms%s",
-             (now - t_start) / 1e6, w_late, w_load, w_peak, w_gap / 1000.0, w_frame / 1000.0, cpu);
+             (now - t_start) / 1e6, w_late, w_jumps, w_load, w_peak, w_gap / 1000.0, w_frame / 1000.0, cpu);
 }

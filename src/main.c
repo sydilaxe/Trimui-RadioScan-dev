@@ -309,6 +309,7 @@ static void audio_cb(void *ud, Uint8 *stream, int len)
         frames -= n;
     }
     aclock_made(len / 4, synth_position(syn), synth_steps_per_frame(syn)); /* where the music is, for Wi-Fi sync */
+    perf_audio_output((const int16_t *)stream, len / 4); /* JUMP: a click made here */
     perf_audio_end(perf_t0);
 }
 
@@ -2549,6 +2550,10 @@ static int audio_open(const char *name)
     if (adev) {
         snprintf(adev_name, sizeof adev_name, "%s", name ? name : "");
         perf_audio_open(audio_rate, have.samples, name);
+        /* which way the sound goes (on MustardOS: PipeWire, or ALSA through PipeWire's plugin), and what the
+         * device took */
+        perf_log("AUDIO", "SDL %s driver: %d Hz, %d channels, format 0x%x, %d frames a buffer", SDL_GetCurrentAudioDriver(),
+                 have.freq, (int)have.channels, (unsigned)have.format, (int)have.samples);
         SDL_PauseAudioDevice(adev, 0);
     } else
         fprintf(stderr, "audio: %s\n", SDL_GetError());
@@ -3803,6 +3808,36 @@ static int midi_test(void)
     return !ok;
 }
 
+/* --jumptest: the click check finds a click in a clean tone, and nothing in a tone, a square wave or a
+ * crushed sound */
+static int jump_test(void)
+{
+    static int16_t b[48000 * 2];
+    int n = 48000;
+    uint32_t seg[4];
+    for (int k = 0; k < 4; k++) {
+        for (int i = 0; i < n; i++) {
+            double ph = 2 * M_PI * 220.0 * i / 48000.0, x;
+            if (k == 2) x = sin(ph) > 0 ? 0.5 : -0.5;                    /* square */
+            else if (k == 3) x = 0.5 * sin(ph);                           /* crushed below */
+            else x = 0.4 * sin(ph);
+            if (k == 3) x = floor(x * 8.0) / 8.0;
+            if (k == 1 && i == 30000) x += 0.5;                          /* one sample off: a click */
+            b[i * 2] = b[i * 2 + 1] = (int16_t)(x * 32767);
+        }
+        if (k >= 2) perf_audio_output(b, n); /* a second of it first: the switch to it is a jump of its own */
+        uint32_t before = perf_jumps();
+        perf_audio_output(b, n);
+        seg[k] = perf_jumps() - before;
+    }
+    uint32_t j = seg[0] + seg[1] + seg[2] + seg[3];
+    int ok = seg[0] == 0 && seg[1] == 1 && seg[2] == 0 && seg[3] == 0;
+    printf("jumptest: a tone %u, the tone with a click %u, a square wave %u, a crushed tone %u (want 0 1 0 0): %s\n",
+           seg[0], seg[1], seg[2], seg[3], ok ? "all good" : "FAILED");
+    (void)j;
+    return !ok;
+}
+
 int main(int argc, char **argv)
 {
     resolve_paths();
@@ -3811,6 +3846,8 @@ int main(int argc, char **argv)
     if (argc >= 2 && !strcmp(argv[1], "--syncsim")) return sync_sim();
     if (argc >= 2 && !strcmp(argv[1], "--midi-chart")) return midi_chart();
     if (argc >= 2 && !strcmp(argv[1], "--miditest")) return midi_test();
+
+    if (argc >= 2 && !strcmp(argv[1], "--jumptest")) return jump_test();
 #ifndef RS_DEVICE
     if (argc >= 2 && !strcmp(argv[1], "--joytest")) return joy_test();
 #endif

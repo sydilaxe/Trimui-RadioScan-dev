@@ -421,6 +421,7 @@ static void play_wav(Stream *s, const char *url, int gen)
 static void *worker_main(void *arg)
 {
     Stream *s = arg;
+    pthread_setname_np(pthread_self(), "stream"); /* named in the log's PROC lines */
     pthread_mutex_lock(&s->mtx);
     while (!s->quit) {
         while (!s->quit && !s->want_play) pthread_cond_wait(&s->cond, &s->mtx);
