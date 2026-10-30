@@ -18,6 +18,20 @@ curl -fsSL https://raw.githubusercontent.com/sydilaxe/Trimui-RadioScan-dev/main/
 
 RadioScan checks for new releases when it starts and offers to update itself.
 
+**New: USB MIDI**
+- A MIDI keyboard plays the voices' pitches: channel 1 voice A, channel 2 voice B. Middle C is the voice's own
+  PITCH, each key a semitone from it, and letting go of every key gives the PITCH back.
+- The important voice, engine and mix settings each have a MIDI CC, on any channel and from any page: 14-25
+  voice A, 102-113 voice B, 3 and 9 their rhythms, 26-31, 85-90 and 114-119 the engine and mix.
+- `docs/MIDI.md` is the MIDI implementation chart.
+**Fix: the black screen on MustardOS, and F1 / F2 on the Brick Pro**
+- The picture is now sent to the screen opaque. Its pixels went out with their alpha (transparency) at 0, which
+  TrimUI OS ignores but MustardOS's display shows, so on MustardOS nothing the app drew was visible.
+- After MustardOS's screen wake the app makes its renderer again, and it rebuilds the picture whenever SDL reports
+  it lost or drawing fails. The log's `SCREEN` lines record each rebuild.
+- F1 and F2 (the two lit buttons under the screen) now work on a Brick Pro under MustardOS, which sends them as
+  buttons 2 and 3; the sticks' clicks still do the same.
+
 **New: deeper logs, to find clicks and tune the app**
 - `log.txt` adds a **PROC** line every 10 s: the processor's time by thread (the audio thread marked), memory and
   its peak, page faults, free memory, and how often the audio thread was preempted.

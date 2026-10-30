@@ -190,6 +190,13 @@ jobs:
           grep -q "bpm 97.0" follow.txt
       - name: Wi-Fi sync timing (a simulated slow network)
         run: ./build/desktop/radioscan --syncsim
+      - name: USB MIDI notes and CCs, and the chart's CC table
+        run: |
+          ./build/desktop/radioscan --miditest | tee midi.txt
+          grep -q "miditest: all good" midi.txt
+          ./build/desktop/radioscan --midi-chart > cc.md
+          sed -n '/<!-- cc table -->/,/<!-- end cc table -->/p' docs/MIDI.md | sed '1d;$d' | diff cc.md -
+
       - name: The click check (JUMP) finds a click and nothing in a tone, a square wave or a crushed sound
         run: ./build/desktop/radioscan --jumptest
       - name: TrimUI buttons through a virtual joystick
