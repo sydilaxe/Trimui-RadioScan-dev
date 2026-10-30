@@ -100,6 +100,9 @@ int euclid_hit(int steps, int pulses, int rotate, int step);
 
 typedef struct Synth Synth;
 
+/* played by hand (synth_set_hand): morph (-1 toward A, +1 toward B) and the filter (-1 darker, +1 brighter) */
+enum { HAND_MORPH, HAND_FILTER, HAND_COUNT };
+
 Synth *synth_create(int sample_rate);
 void synth_destroy(Synth *s);
 void synth_set_param(Synth *s, int id, float v);
@@ -150,6 +153,8 @@ enum { TAP_STREAM, TAP_VOICES, TAP_CROSS, TAP_FILTER, TAP_FOLD, TAP_ECHO, TAP_OU
 /* level (RMS), brightness (0 dark .. ~1.4 noise) and crest factor (peak / RMS) over the last ~20 ms */
 void synth_tap_features(const Synth *s, int tap, float *rms, float *bright, float *crest);
 float synth_fold_preview(float x, float fold);         /* the folder's shape at a fold amount */
+void synth_set_hand(Synth *s, int which, float v);   /* -1..1 over the top of the setting, 0 lets go */
+float synth_played_param(const Synth *s, int id);     /* a value as it plays now: with the LFOs and the hand */
 float synth_cross_amount(const Synth *s);              /* 0..1: how much cross-modulation is on */
 #define LIMIT_RANGE_DB 18.0f                           /* the limiter can push the mix up to +18 dB into its ceiling */
 /* MIX page meters: peak level (0..~1) of each voice after its drive and fader, each effect's return and the

@@ -11,8 +11,8 @@ a wavefolder, echo and space.
 This is the TrimUI port of the Miyoo Mini Plus version ([Miyoo-RadioScan-dev](https://github.com/sydilaxe/Miyoo-RadioScan-dev)):
 the same instrument and the same sound, on SDL2, with the 640x480 pages scaled 1.6x to fill the Brick's 1024x768
 screen. What's new on the TrimUI: half the Miyoo's audio delay, a USB sound card or DAC takes over the output while
-it's plugged in, and the Brick Pro's left stick works as a second d-pad. Settings and station lists from the Miyoo
-load as they are.
+it's plugged in, and the Brick Pro's sticks sweep the stations and play morph and the filter by hand. Settings and
+station lists from the Miyoo load as they are.
 
 ## How it works
 
@@ -292,6 +292,27 @@ tempo, Wi-Fi sync and every setting are just as you left them when you come back
 on. RAW, the fader and the fade time are saved, so RadioScan opens in RAW if you left it there. RAW is stereo even
 when the output is set to mono + clock.
 
+### Brick Pro: the sticks
+
+The left stick sweeps the stations by hand, like turning a tuning dial: **left / right for voice A, up / down for
+voice B** (right and down go further down the station list, as on the RADIO page). The further you push, the further
+from the voice's own station it goes, up to half the list either way; a light push moves a station at a time, and
+the name of the station under the stick shows as you sweep. Rest the stick on one and the voice crossfades into it
+once it is playing (sweeping straight past doesn't connect to every station on the way). Let go and the voice glides
+back to its own station. It is radio scan played by hand: it takes over from a voice's RADIO SCAN LFO while pushed,
+works on every screen including RAW, and nothing it does is saved.
+
+The right stick plays the sound by hand and springs back when you let go: **left / right morphs toward voice A /
+voice B, up / down opens / closes the filter**. Pushed all the way it takes morph or the filter to the end of its
+range, from wherever the setting and any LFO have it; let go and it glides back. Your settings don't change and
+nothing it does is saved. The centre of PLAY shows the morph as it plays. In RAW, left / right moves the crossfader
+the same way, springing back to where you left the fader.
+
+Clicking the sticks does F1 (left) and F2 (right): the Brick Pro's controller numbers its clicks where the Brick's
+F1 and F2 are.
+
+The same zip works on every Brick: the plain Brick and the Brick Hammer have no stick, and nothing changes for them.
+
 ## Wi-Fi sync
 
 RadioScan shares its clock with other units on the same Wi-Fi network that speak the same sync protocol.
@@ -366,14 +387,15 @@ It opens a 1024x768 window, as on the Brick. Keyboard on desktop, the Miyoo's ke
 
 On the TrimUI the buttons arrive as a joystick: B 0, A 1, Y 2, X 3, L1 4, R1 5, SELECT 6, START 7, MENU 8, the
 d-pad as hat 0, and L2 and R2 as axes 2 and 5 (TrimUI OS, NextUI and MinUI agree). The Brick Pro's left stick
-(axes 0 and 1) works as a second d-pad; the right stick isn't used. MustardOS gives its own "muOS-Keys" controller instead, numbered as in
-its `device/tui-brick*` maps (different on the Brick and the Brick Pro, with L2 and R2 as buttons); RadioScan reads
-it when it is there and ignores the TrimUI's controller underneath. If a firmware numbers them differently,
-`RS_JOYMAP=A=1,B=0,...` in `launch.sh` remaps them; a button RadioScan doesn't know is noted in `log.txt` when
-pressed. F1 and F2 are taken to be the two buttons after MENU: 9 and 10 (15 and 16 on MustardOS's Brick controller, 16
-and 17 on its Brick Pro one), the numbers other firmwares call L3 and R3; if they turn out different, the log
-names the button pressed and `RS_JOYMAP=F1=..,F2=..` moves them. The same binary goes into both packages; it updates from the MustardOS package when its folder has
-`mux_launch.sh` (`mustardos/`), which only that package carries.
+(axes 0 and 1) sweeps the stations and the right one (axes 3 and 4) plays morph and the filter. MustardOS gives its
+own "muOS-Keys" controller instead, numbered as in its `device/tui-brick*` maps (different on the Brick and the Brick
+Pro, with L2 and R2 as buttons); RadioScan reads it when it is there and ignores the TrimUI's controller underneath.
+If a firmware numbers them differently, `RS_JOYMAP=A=1,B=0,...` in `launch.sh` remaps them; a button RadioScan
+doesn't know is noted in `log.txt` when pressed. F1 and F2 are taken to be the two buttons after MENU: 9 and 10 (15
+and 16 on MustardOS's Brick controller, 16 and 17 on its Brick Pro one), the numbers other firmwares call L3 and R3,
+so on the Brick Pro the stick clicks do F1 and F2; if they turn out different, the log names the button pressed and
+`RS_JOYMAP=F1=..,F2=..` moves them. The same binary goes into both packages; it updates from the MustardOS package
+when its folder has `mux_launch.sh` (`mustardos/`), which only that package carries.
 
 ### Releasing
 
