@@ -25,7 +25,8 @@ one place: it picks the release file (`RadioScan-trimui.zip`, or `RadioScan-must
 has `mux_launch.sh`; keep `mux_launch.sh` out of the TrimUI OS zip).
 
 `src/perflog.c` (the performance log in `log.txt`, `RS_LOG`) and `Apps/RadioScan/sysinfo.sh` (`sysinfo.txt`) are
-shared with HI5 (and `sysinfo.sh` with Jaffedrone); keep the copies the same. The audio callback only calls
+shared with HI5 (and `sysinfo.sh` with Jaffedrone); keep the copies the same. So is `src/ringleds.c`, the Brick
+Pro's lights. The audio callback only calls
 `perf_audio_begin` / `perf_audio_end`; the event log is written out with each STAT line.
 
 When you change a control or a screen, update the README's Controls section and the footer hints in `src/main.c`.

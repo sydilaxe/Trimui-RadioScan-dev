@@ -15,6 +15,7 @@
 #include <pthread.h>
 #include <sched.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -31,6 +32,7 @@
 #include "font.h"
 #include "net.h"
 #include "perflog.h"
+#include "ringleds.h"
 #include "stations.h"
 #include "stream.h"
 #include "sync.h"
@@ -310,6 +312,7 @@ static void audio_cb(void *ud, Uint8 *stream, int len)
     }
     aclock_made(len / 4, synth_position(syn), synth_steps_per_frame(syn)); /* where the music is, for Wi-Fi sync */
     perf_audio_output((const int16_t *)stream, len / 4); /* JUMP: a click made here */
+    ringleds_audio((const int16_t *)stream, len / 4);   /* the Brick Pro's top bar meter */
     perf_audio_end(perf_t0);
 }
 
@@ -2671,6 +2674,37 @@ static void rstick_apply(void)
     raw_hand = raw ? rstick[0] : 0;
 }
 
+/* The Brick Pro's lights (ringleds.h): the left stick's ring points with the sweep, green across (voice A), amber up and
+ * down (voice B); the right stick's ring with the hand, green toward A and amber toward B across (morph), the river's
+ * blue up and down (filter); the top bar the output's level; L1, L2, R1, R2 the beat while the rhythm runs. One build
+ * serves every device: the lights come on with MustardOS's Brick Pro controller, a TRIMUI_MODEL naming a Brick Pro, or
+ * the first move of a stick (only the Brick Pro has them). */
+static int leds_state; /* 0 not yet, 1 driven, -1 not here */
+static void leds_try(int brickpro, const char *why)
+{
+    if (leds_state) return;
+    if (ringleds_open("RS", brickpro)) {
+        leds_state = 1;
+        perf_log("START", "LEDs: the Brick Pro's rings, top bar and shoulders (%s)", why);
+    } else if (brickpro)
+        leds_state = -1;
+}
+
+static uint32_t leds_axis_col(float x, float y, uint32_t left, uint32_t right, uint32_t vert)
+{
+    return fabsf(y) > fabsf(x) ? vert : x < 0 ? left : right;
+}
+
+static void leds_update(void)
+{
+    if (leds_state != 1) return;
+    enum { LED_A = 0x50e030, LED_B = 0xffa020, LED_WATER = 0x40c8d0 };
+    float lx = sweep[0], ly = -sweep[1], rx = rstick[0], ry = -rstick[1]; /* the rings' y is up */
+    int run = synth_running(syn);
+    ringleds_update(lx, ly, leds_axis_col(lx, ly, LED_A, LED_A, LED_B), rx, ry, leds_axis_col(rx, ry, LED_A, LED_B, LED_WATER),
+                    run, run ? (int)floor(sc_position()) : 0, sc_bpm(), 0, 0);
+}
+
 /* how many stations from home the stick has a voice: off is the offset now, kept until the stick is well past the
  * next station's place so a stick resting on a boundary doesn't flip between two */
 static int sweep_offset(float x, int n, int off)
@@ -3115,8 +3149,10 @@ static void on_axis(int role, int v, Uint32 now)
         }
     } else if (role == AX_LX || role == AX_LY) { /* the left stick sweeps the stations: across A, up and down B */
         sweep[role == AX_LY] = stick_value(v);
+        if (sweep[role == AX_LY] != 0.0f) leds_try(1, "a stick moved");
     } else if (role == AX_RX || role == AX_RY) { /* the right stick plays morph and the filter by hand */
         rstick[role == AX_RY] = stick_value(v);
+        if (rstick[role == AX_RY] != 0.0f) leds_try(1, "a stick moved");
     }
 }
 
@@ -3843,6 +3879,86 @@ static int jump_test(void)
     return !ok;
 }
 
+#define LED_PREFIX "RS"
+/* --ledtest [folder]: the Brick Pro's lights (ringleds.h) against a stand-in for the driver's folder */
+static int led_test(const char *out)
+{
+    /* the Brick Pro's LEDs (ringleds.h), against a stand-in for the driver's folder */
+    char d[300], p[400], v[256];
+    snprintf(d, sizeof d, "%s/led_anim", out);
+    mkdir(d, 0755);
+    static const char *const files[][2] = {
+        {"frame_hex", "\n"}, {"effect_enable", "1\n"}, {"max_scale", "0\n"}, {"effect_lr", "4\n"},
+        {"effect_rgb_hex_lr", "0000FF \n"}, {"effect_f1", "1\n"}, {"effect_rgb_hex_f1", "FF0000 \n"}};
+    for (unsigned i = 0; i < sizeof files / sizeof files[0]; i++) {
+        snprintf(p, sizeof p, "%s/%s", d, files[i][0]);
+        FILE *f = fopen(p, "w");
+        if (f)
+            fputs(files[i][1], f), fclose(f);
+}
+    setenv(LED_PREFIX "_LED_DIR", d, 1);
+    setenv(LED_PREFIX "_LED_FRAME", "1", 1);
+    remove("ringleds_saved.txt");
+#define LED_READ(name)                                                                                                 \
+    do {                                                                                                               \
+    snprintf(p, sizeof p, "%s/%s", d, name);                                                                       \
+    FILE *f = fopen(p, "r");                                                                                       \
+    v[0] = 0;                                                                                                      \
+    if (f) {                                                                                                       \
+        if (!fgets(v, sizeof v, f))                                                                                \
+            v[0] = 0;                                                                                              \
+        fclose(f);                                                                                                 \
+    }                                                                                                              \
+    } while (0)
+    int opened = ringleds_open(LED_PREFIX, 0);
+    LED_READ("effect_enable");
+    int effects_off = atoi(v) == 0;
+    LED_READ("max_scale");
+    int bright = atoi(v) == 60;
+    /* full scale on the left channel, silence on the right */
+    static int16_t s[256 * 2];
+    for (int i = 0; i < 256; i++)
+        s[i * 2] = i & 1 ? 32000 : -32000, s[i * 2 + 1] = 0;
+    ringleds_audio(s, 256);
+    /* the left stick up, the right stick right, the bar's first beat */
+    ringleds_update(0.f, 1.f, 0x46b4ff, 1.f, 0.f, 0xff2030, 1, 0, 120.f, 0, 0);
+    LED_READ("frame_hex");
+    unsigned c[23] = {0};
+    int n = 0;
+    for (char *q = v; n < 23 && *q;) {
+        char *e;
+        unsigned long x = strtoul(q, &e, 16);
+        if (e == q)
+            break;
+        c[n++] = (unsigned)x, q = e;
+}
+    /* the left ring's upper corners (11 and 14) lit, the lower dark; the right ring's right corners (17, 18) */
+    int rings = n == 23 && c[10] && c[13] && !c[11] && !c[12] && !c[14] && !c[15] && c[16] && c[17] &&
+                (c[10] & 0xff) > (c[10] >> 16) && (c[16] >> 16) > (c[16] & 0xff);
+    /* the bar: the left channel all the way out (LEDs 4 .. 1, red at the end), the right dark */
+    int bar = c[0] == 0xff2010 && c[3] && !c[4] && !c[5] && !c[6] && !c[7];
+    int beat = c[18] && c[19] && c[20] && c[21] && (c[18] >> 16) > (c[18] & 0xff), others = !c[8] && !c[9] && !c[22];
+    ringleds_close();
+    LED_READ("frame_hex");
+    int dark = !strncmp(v, "000000 000000", 13);
+    LED_READ("effect_enable");
+    int back = atoi(v) == 1;
+    LED_READ("effect_rgb_hex_lr");
+    back &= !strncmp(v, "0000FF", 6);
+    LED_READ("effect_lr");
+    back &= atoi(v) == 4;
+    LED_READ("max_scale");
+    back &= atoi(v) == 0;
+    back &= access("ringleds_saved.txt", F_OK) != 0;
+    printf("leds: driven %d, effects off %d, bright %d; rings point with the sticks %d, level bar %d, beat on the "
+           "shoulders %d, the rest dark %d; given back (dark frame, effects on): %d\n",
+           opened, effects_off, bright, rings, bar, beat, others, dark && back);
+    unsetenv(LED_PREFIX "_LED_FRAME");
+        int good = opened && effects_off && bright && rings && bar && beat && others && dark && back;
+    printf("ledtest: %s\n", good ? "all good" : "FAILED");
+    return !good;
+}
+
 int main(int argc, char **argv)
 {
     resolve_paths();
@@ -3853,6 +3969,7 @@ int main(int argc, char **argv)
     if (argc >= 2 && !strcmp(argv[1], "--miditest")) return midi_test();
 
     if (argc >= 2 && !strcmp(argv[1], "--jumptest")) return jump_test();
+    if (argc >= 2 && !strcmp(argv[1], "--ledtest")) return led_test(argc > 2 ? argv[2] : ".");
 #ifndef RS_DEVICE
     if (argc >= 2 && !strcmp(argv[1], "--joytest")) return joy_test();
 #endif
@@ -3940,6 +4057,11 @@ int main(int argc, char **argv)
         present();
         joy_map_init();
         open_joysticks();
+        int brickpro = 0;
+        for (int i = 0; i < npads; i++) brickpro |= pads[i].kind == PAD_MUOS_BRICKPRO;
+        const char *model = getenv("TRIMUI_MODEL");
+        if (!brickpro && model && strcasestr(model, "brick") && strcasestr(model, "pro")) brickpro = 2;
+        leds_try(brickpro, brickpro == 2 ? "TRIMUI_MODEL" : brickpro ? "MustardOS's Brick Pro controller" : "RS_LED_FRAME");
     }
 
     audio_rate = getenv("RS_RATE") ? atoi(getenv("RS_RATE")) : 48000;
@@ -4047,12 +4169,14 @@ int main(int argc, char **argv)
         render();
         present();
         perf_frame((uint64_t)((mono_ms() - f0) * 1000.0));
+        leds_update();
         Uint32 spent = SDL_GetTicks() - now; /* ~30 frames per second, whatever the drawing cost */
         if (spent < 33) SDL_Delay(33 - spent);
     }
 
     ev("quit");
     ev_flush();
+    ringleds_close();
     perf_close();
     midi_stop();
     sync_close();

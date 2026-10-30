@@ -313,6 +313,22 @@ F1 and F2 are.
 
 The same zip works on every Brick: the plain Brick and the Brick Hammer have no stick, and nothing changes for them.
 
+### Brick Pro: the lights
+
+On the Brick Pro RadioScan drives the lights one by one:
+
+| Lights | Show |
+| --- | --- |
+| left stick's ring | Points where the left stick is pushed, brighter the further: green across (voice A), amber up and down (voice B) |
+| right stick's ring | Points where the right stick is pushed: green toward voice A, amber toward voice B (morph), blue up and down (the filter) |
+| top bar | A stereo level meter of the output, from the centre out: the left channel to the left, the right to the right, green rising to amber and red near full scale |
+| under L1, L2, R1, R2 | The beat while the rhythm runs: a flash each quarter note, orange on the bar's first |
+| F1, F2 | Dark |
+
+They come on with MustardOS's Brick Pro controller; on TrimUI OS, with the first move of a stick. When RadioScan
+closes the lights go back to how they were. Settings in `launch.sh`: `RS_LEDS=0` leaves the lights alone,
+`RS_LED_BAR=0` keeps the top bar dark, `RS_LED_BRIGHTNESS=1..60` (60 by default).
+
 ## USB MIDI
 
 Plug a class-compliant MIDI keyboard or controller into the TrimUI's USB host port (the Brick's top USB-C). It
@@ -436,6 +452,9 @@ whether it found peers, who led and how far apart the units ended up. Run two or
 
 `radioscan --joytest` (desktop builds) drives the TrimUI's button, hat, trigger and stick numbers through SDL's
 virtual joystick and checks what the app does with each, then does the same with a MustardOS Brick Pro controller.
+
+`radioscan --ledtest [folder]` drives the Brick Pro's lights against a stand-in for the LED driver made in the folder,
+and checks the rings, the level bar, the beat and that the lights are given back.
 
 `radioscan --update [--force]` checks for a newer release and installs it into `RADIOSCAN_DIR`, the way the app
 does. `tools/fake_github.py` serves a local zip as GitHub's latest release, redirect and all; point

@@ -199,6 +199,11 @@ jobs:
 
       - name: The click check (JUMP) finds a click and nothing in a tone, a square wave or a crushed sound
         run: ./build/desktop/radioscan --jumptest
+      - name: The Brick Pro's lights (rings, level bar, beat) against a stand-in LED driver
+        run: |
+          mkdir -p l
+          ./build/desktop/radioscan --ledtest l | tee l/leds.txt
+          grep -q "ledtest: all good" l/leds.txt
       - name: TrimUI buttons through a virtual joystick
         run: |
           mkdir -p j
