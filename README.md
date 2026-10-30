@@ -226,6 +226,8 @@ ring is outlined, and every change shows its pattern briefly, like `A  E(5,8) >2
 | hold R2 + X / B | fold more / less |
 | hold R2 + Y / A | space less / more |
 | R2 + L1 / R1 / SELECT | dice: new rhythms / new sound / hop both stations |
+| F1 | new Euclidean patterns on all six rings (each stays on or off as it was) |
+| F2 | dice on every voice and engine setting (as R2 + R1) |
 | L1 / R1 | pitch down / up an octave (LOOP, WAVE and GRAIN voices) |
 | SELECT | tap tempo |
 | START | go to EDIT |
@@ -241,6 +243,7 @@ ring is outlined, and every change shows its pattern briefly, like `A  E(5,8) >2
 | Up / Down | choose a row; Left / Right change it (hold B for fine steps) |
 | X / L2 | grab a fresh slice for the voice of the selected setting (both when it isn't a voice setting) |
 | Y | roll the dice on the selected section |
+| F1 / F2 | new Euclidean patterns / dice on the sound, as on PLAY |
 | SELECT | tap tempo |
 | START | back to PLAY |
 | hold MENU + START | clean slate (see below) |
@@ -359,14 +362,17 @@ It opens a 1024x768 window, as on the Brick. Keyboard on desktop, the Miyoo's ke
 | E / T | L1 / R1 |
 | Tab / Backspace | L2 / R2 |
 | R-Ctrl / Enter / Esc | SELECT / START / MENU |
+| F1 / F2 | F1 / F2 |
 
 On the TrimUI the buttons arrive as a joystick: B 0, A 1, Y 2, X 3, L1 4, R1 5, SELECT 6, START 7, MENU 8, the
 d-pad as hat 0, and L2 and R2 as axes 2 and 5 (TrimUI OS, NextUI and MinUI agree). The Brick Pro's left stick
-(axes 0 and 1) works as a second d-pad. MustardOS gives its own "muOS-Keys" controller instead, numbered as in
+(axes 0 and 1) works as a second d-pad; the right stick isn't used. MustardOS gives its own "muOS-Keys" controller instead, numbered as in
 its `device/tui-brick*` maps (different on the Brick and the Brick Pro, with L2 and R2 as buttons); RadioScan reads
 it when it is there and ignores the TrimUI's controller underneath. If a firmware numbers them differently,
 `RS_JOYMAP=A=1,B=0,...` in `launch.sh` remaps them; a button RadioScan doesn't know is noted in `log.txt` when
-pressed. The same binary goes into both packages; it updates from the MustardOS package when its folder has
+pressed. F1 and F2 are taken to be the two buttons after MENU: 9 and 10 (15 and 16 on MustardOS's Brick controller, 16
+and 17 on its Brick Pro one), the numbers other firmwares call L3 and R3; if they turn out different, the log
+names the button pressed and `RS_JOYMAP=F1=..,F2=..` moves them. The same binary goes into both packages; it updates from the MustardOS package when its folder has
 `mux_launch.sh` (`mustardos/`), which only that package carries.
 
 ### Releasing
