@@ -23,6 +23,8 @@ export RADIOSCAN_DIR="$(pwd)"
 # export RS_AUDIO=<name>    # the output device whose name contains <name> (see log.txt)
 # export RS_ROTATE=180      # turn the picture, for a firmware whose screen is turned
 # export RS_JOYMAP=A=1,B=0  # another firmware's button numbers (see log.txt for buttons it doesn't know)
+# export RS_LEDS=0          # Brick Pro: leave the lights alone;  RS_LED_BAR=0: keep the top bar dark
+# export RS_LED_BRIGHTNESS=30  # Brick Pro: the lights' brightness, 1..60 (60 by default)
 # export RS_LOG=2           # the performance log in log.txt every second, and every button press (1: every 10 s,
 #                           # the default; 0: off)
 # export RS_SYSINFO=0       # no sysinfo.txt, the system report (see sysinfo.sh)
