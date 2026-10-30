@@ -18,6 +18,15 @@ curl -fsSL https://raw.githubusercontent.com/sydilaxe/Trimui-RadioScan-dev/main/
 
 RadioScan checks for new releases when it starts and offers to update itself.
 
+**New: deeper logs, to find clicks and tune the app**
+- `log.txt` adds a **PROC** line every 10 s: the processor's time by thread (the audio thread marked), memory and
+  its peak, page faults, free memory, and how often the audio thread was preempted.
+- **JUMP** lines: the app watches its own output for clicks and logs each with its time. A click heard with no
+  JUMP and no dropout comes from after the app, in the sound server.
+- STAT counts late audio calls (dropout or not) and jumps; the log names SDL's audio driver and what the device took.
+- `sysinfo.txt` records the sound path: PipeWire's devices, rate and quantum, the mixer, and every 10 s PipeWire's
+  nodes with their xrun (ERR) counts.
+
 **New: MustardOS, and logs for tuning**
 - A package for MustardOS on the Brick, Brick Hammer and Brick Pro, installed from the Archive Manager. RadioScan
   reads MustardOS's controller, so every button (and the Brick Pro's stick) works as on TrimUI OS, and it updates

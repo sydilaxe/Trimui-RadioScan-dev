@@ -464,16 +464,25 @@ Two files in the app folder tell you how RadioScan runs on your device, Brick or
   stations connecting and failing, late audio buffers), and a **STAT** line every 10 seconds:
 
   ```
-     30.512 STAT  audio load avg 6% peak 14% | dropouts 0 | gap max 22.0 ms (buffer 21.3) | 47 calls/s | screen 30 fps, avg 7.2 ms max 11.8 ms | cpu 1800 MHz 49 C cores 0-3 load 0.80
+     30.512 STAT  audio load avg 6% peak 14% | dropouts 0, late calls 0, jumps 0 | gap max 22.0 ms (buffer 21.3) | 47 calls/s | screen 30 fps, avg 7.2 ms max 11.8 ms | cpu 1800 MHz 49 C cores 0-3 load 0.80
+     30.512 PROC  cpu 31% (audio:SDLAudioP2 14%, radioscan 9%, stream 3%, stream 3%) | memory 38.2 MB, peak 41.0 | faults 0 major, 12 minor | free 520 MB | audio thread waited 470, preempted 2
   ```
 
   *audio load* is the time spent making sound against the time it lasts (over 60%, crackles are near); *dropouts*
-  count the times the sound device ran dry (a crackle each); *gap max* is the longest wait between two buffers.
+  count the times the sound device ran dry (a crackle each); *late calls* the buffers asked for over one and a half
+  buffers late (a dropout or not); *gap max* is the longest wait between two buffers. *jumps* count the times the
+  app's own output jumped far more sharply than the sound around it (a click made inside RadioScan; each is also
+  logged as a **JUMP** line with its time, at most one a second). A click you hear with no jump and no dropout in
+  the log comes from after RadioScan: the sound server (see `sysinfo.txt`).
+  The **PROC** line shows where the processor's time goes (the app and its busiest threads, as % of one core; the
+  audio thread is marked), the app's memory and its peak, page faults (major ones wait on the SD card), the
+  system's free memory, and how often the audio thread was preempted (made to wait while something else ran).
   **HINT** lines say what to change, such as `RS_BUFFER=2048` when the load is high or there were dropouts, or that
   the processor was slowed down or is hot. At quit an **END** line sums up the session's worst figures.
 - **`sysinfo.txt`**, written by `sysinfo.sh` from `launch.sh`: the firmware, the processor, memory, sound, USB,
-  input and network devices and the processes running at start, then every 10 seconds the system load, clock,
-  temperature and the busiest processes.
+  input and network devices, the sound path (SDL's driver settings, PipeWire's devices, rate and quantum, the
+  mixer) and the processes running at start, then every 10 seconds the system load, clock, temperature, the
+  busiest processes and PipeWire's nodes with their **ERR** count: the times the sound server itself ran short.
 
 `RS_LOG=2` writes the STAT line every second and logs every button, hat, trigger and stick move as the controller
 sends it and as RadioScan reads it: the way to check a firmware's button numbering. Both files are rewritten each

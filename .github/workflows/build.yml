@@ -190,6 +190,8 @@ jobs:
           grep -q "bpm 97.0" follow.txt
       - name: Wi-Fi sync timing (a simulated slow network)
         run: ./build/desktop/radioscan --syncsim
+      - name: The click check (JUMP) finds a click and nothing in a tone, a square wave or a crushed sound
+        run: ./build/desktop/radioscan --jumptest
       - name: TrimUI buttons through a virtual joystick
         run: |
           mkdir -p j
@@ -206,9 +208,11 @@ jobs:
           # the performance log: the system, a status line, the session's summary
           grep -q " SYS   " a/log.txt
           grep -q " STAT  audio load avg .* dropouts .* screen .* fps" a/log.txt
+          grep -q " AUDIO SDL .* driver: 48000 Hz, 2 channels" a/log.txt
           grep -q " END   session " a/log.txt
           # and every second, with every button, at RS_LOG=2; the screen wake runs once the window is up
           SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy RADIOSCAN_DIR=a RS_LOG=2 RS_SCREEN_WAKE='touch a/woke' \
             timeout -s TERM 4 ./build/desktop/radioscan > a/log2.txt 2>&1 || true
           test "$(grep -c " STAT  " a/log2.txt)" -ge 3
+          grep -q " PROC  cpu .*%.* | memory .* MB, peak" a/log2.txt
           test -f a/woke
