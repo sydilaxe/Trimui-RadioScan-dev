@@ -18,6 +18,13 @@ curl -fsSL https://raw.githubusercontent.com/sydilaxe/Trimui-RadioScan-dev/main/
 
 RadioScan checks for new releases when it starts and offers to update itself.
 
+**New: USB MIDI**
+- A MIDI keyboard plays the voices' pitches: channel 1 voice A, channel 2 voice B. Middle C is the voice's own
+  PITCH, each key a semitone from it, and letting go of every key gives the PITCH back.
+- The important voice, engine and mix settings each have a MIDI CC, on any channel and from any page: 14-25
+  voice A, 102-113 voice B, 3 and 9 their rhythms, 26-31, 85-90 and 114-119 the engine and mix.
+- `docs/MIDI.md` is the MIDI implementation chart.
+
 **New: MustardOS, and logs for tuning**
 - A package for MustardOS on the Brick, Brick Hammer and Brick Pro, installed from the Archive Manager. RadioScan
   reads MustardOS's controller, so every button (and the Brick Pro's stick) works as on TrimUI OS, and it updates

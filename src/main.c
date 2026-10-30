@@ -34,6 +34,7 @@
 #include "stations.h"
 #include "stream.h"
 #include "sync.h"
+#include "midi.h"
 #include "update.h"
 
 #ifndef M_PI
@@ -3561,12 +3562,186 @@ static int joy_test(void)
 }
 #endif
 
+/* ================================================================== MIDI
+ * Notes on channel 1 play voice A's pitch, on channel 2 voice B's: middle C (60) is the voice's own PITCH, each key
+ * a semitone from it. While keys are held the voice follows the last one; with all let go it goes back to its PITCH.
+ * The important voice, engine and mix settings each have a CC, on any channel and from any page. The numbers are
+ * ones MIDI leaves free: 14-25 voice A, 102-113 voice B (the same order), 3 / 9 their rhythms on and off, and
+ * 26-31, 85-90 and 114-119 the engine and mix. A CC's 0-127 spans the setting's range, along its own curve (a
+ * size or rate steps evenly in octaves); a choice or an on / off takes the nearest. */
+#define V(o, F) (P_A_##F + (o) * OSC_STRIDE)
+static const struct {
+    unsigned char cc;
+    short id;
+} midi_cc_map[] = {
+    {3, P_A_GATE_ON},    {9, P_B_GATE_ON},
+    {14, V(0, MODE)},    {15, V(0, TUNE)},    {16, V(0, SIZE)},    {17, V(0, TEXTURE)},  {18, V(0, DIR)},
+    {19, V(0, FOCUS)},   {20, V(0, LEVEL)},   {21, V(0, MUTE)},    {22, V(0, PAN)},      {23, V(0, DRIVE)},
+    {24, V(0, OSC)},     {25, V(0, OSC_MIX)},
+    {26, P_MORPH},       {27, P_TONE},        {28, P_RESO},        {29, P_FM},           {30, P_RING},
+    {31, P_CONVERSE},    {85, P_VOCODE},      {86, P_VOCODE_AMT},  {87, P_DRIVE},        {88, P_FOLD},
+    {89, P_CRUSH},       {90, P_ECHO},
+    {102, V(1, MODE)},   {103, V(1, TUNE)},   {104, V(1, SIZE)},   {105, V(1, TEXTURE)}, {106, V(1, DIR)},
+    {107, V(1, FOCUS)},  {108, V(1, LEVEL)},  {109, V(1, MUTE)},   {110, V(1, PAN)},     {111, V(1, DRIVE)},
+    {112, V(1, OSC)},    {113, V(1, OSC_MIX)},
+    {114, P_SPACE},      {115, P_WIDTH},      {116, P_VOLUME},     {117, P_BPM},         {118, P_LOW},
+    {119, P_HIGH},
+};
+#undef V
+#define NMIDI_CC ((int)(sizeof midi_cc_map / sizeof midi_cc_map[0]))
+
+/* a setting stepped in whole numbers: a choice, or a count */
+static int param_whole(int id)
+{
+    const ParamInfo *pi = &param_info[id];
+    return pi->choices || (!pi->log && pi->step >= 1.0f);
+}
+
+static float midi_cc_value(int id, int v)
+{
+    const ParamInfo *pi = &param_info[id];
+    float x = v / 127.0f;
+    if (pi->log && pi->min > 0) return pi->min * powf(pi->max / pi->min, x);
+    float y = pi->min + (pi->max - pi->min) * x;
+    return param_whole(id) ? roundf(y) : y;
+}
+
+static int midi_cc(int cc, int v)
+{
+    for (int i = 0; i < NMIDI_CC; i++)
+        if (midi_cc_map[i].cc == cc) {
+            int id = midi_cc_map[i].id;
+            float x = midi_cc_value(id, v);
+            if (id == P_BPM && sync_status()->following) return 1; /* the lead unit sets the tempo */
+            if (x != synth_get_param(syn, id)) {
+                synth_set_param(syn, id, x);
+                ui.dirty_settings = 1;
+            }
+            return 1;
+        }
+    return 0;
+}
+
+/* each voice's held keys, oldest first, and its PITCH before the first */
+static struct {
+    int n;
+    unsigned char key[16];
+    float base;
+} midi_keys[2];
+
+static void midi_pitch(int o)
+{
+    int id = P_A_TUNE + o * OSC_STRIDE;
+    float t = midi_keys[o].n ? midi_keys[o].base + (midi_keys[o].key[midi_keys[o].n - 1] - 60) : midi_keys[o].base;
+    synth_set_param(syn, id, t); /* clamped to the setting's two octaves */
+}
+
+static void midi_note(int o, int key, int on)
+{
+    if (o < 0 || o > 1) return;
+    typeof(midi_keys[0]) *h = &midi_keys[o];
+    int was_held = h->n > 0;
+    for (int i = 0; i < h->n; i++) /* a key already held moves to the end, or goes */
+        if (h->key[i] == key) {
+            memmove(&h->key[i], &h->key[i + 1], (size_t)(h->n - i - 1));
+            h->n--;
+            break;
+        }
+    if (on) {
+        if (!h->n) h->base = synth_get_param(syn, P_A_TUNE + o * OSC_STRIDE);
+        if (h->n == (int)sizeof h->key) memmove(&h->key[0], &h->key[1], (size_t)--h->n);
+        h->key[h->n++] = (unsigned char)key;
+    } else if (!h->n && !was_held)
+        return; /* a key let go that wasn't held: the PITCH stays as it is */
+    midi_pitch(o);
+}
+
+/* what MIDI has brought since the last frame (main thread) */
+static void midi_poll(void)
+{
+    char note[48];
+    while (midi_take_notice(note, sizeof note)) {
+        toast("%s", note);
+        ev("%s", note);
+    }
+    int kind, ch, a, b;
+    while (midi_take(&kind, &ch, &a, &b)) {
+        if (kind == 0xb0) midi_cc(a, b);
+        else if (ch < 2) midi_note(ch, a, kind == 0x90);
+    }
+}
+
+/* the implementation chart's CC table, as Markdown (--midi-chart) */
+static int midi_chart(void)
+{
+    printf("| CC | Setting | Range |\n|---|---|---|\n");
+    for (int i = 0; i < NMIDI_CC; i++) {
+        int id = midi_cc_map[i].id;
+        const ParamInfo *pi = &param_info[id];
+        const char *who = id >= P_A_STATION && id < P_B_STATION ? "Voice A " : id >= P_B_STATION && id < P_BPM ? "Voice B " : "";
+        printf("| %d | %s%s | ", midi_cc_map[i].cc, who, pi->label);
+        if (pi->choices) {
+            int n = (int)(pi->max - pi->min) + 1;
+            for (int k = 0; k < n; k++) {
+                int lo = k == 0 ? 0 : (int)ceilf((k - 0.5f) * 127.0f / (n - 1)), hi = k == n - 1 ? 127 : (int)ceilf((k + 0.5f) * 127.0f / (n - 1)) - 1;
+                printf("%s%d-%d %s", k ? ", " : "", lo, hi, pi->choices[k]);
+            }
+        } else
+            printf("%g to %g%s%s%s", pi->min, pi->max, *pi->unit && strcmp(pi->unit, "int") ? " (" : "",
+                   *pi->unit && strcmp(pi->unit, "int") ? pi->unit : "", *pi->unit && strcmp(pi->unit, "int") ? ")" : "");
+        if (pi->log) printf(", in even steps of octaves");
+        printf(" |\n");
+    }
+    return 0;
+}
+
+/* --miditest: notes play each voice's pitch and give it back, CCs set the settings */
+static int midi_test(void)
+{
+    syn = synth_create(48000);
+    int ok = 1;
+    synth_set_param(syn, P_A_TUNE, 3);
+    uint8_t m[] = {0x90, 64, 100,  /* A: +4 from its +3 */
+                   0x90, 55, 100,  /* A: the last key, -5 */
+                   0x91, 72, 90};  /* B: +12 */
+    midi_feed(m, sizeof m);
+    midi_poll();
+    float a1 = synth_get_param(syn, P_A_TUNE), b1 = synth_get_param(syn, P_B_TUNE);
+    uint8_t off1[] = {0x80, 55, 0};  /* back to the key still held */
+    midi_feed(off1, sizeof off1);
+    midi_poll();
+    float a2 = synth_get_param(syn, P_A_TUNE);
+    uint8_t off2[] = {0x90, 64, 0, 0x81, 72, 0}; /* note on at velocity 0 is a note off */
+    midi_feed(off2, sizeof off2);
+    midi_poll();
+    float a3 = synth_get_param(syn, P_A_TUNE), b3 = synth_get_param(syn, P_B_TUNE);
+    int notes_ok = a1 == -2 && b1 == 12 && a2 == 7 && a3 == 3 && b3 == 0;
+    printf("miditest notes: A follows the last key %g (want -2), B %g (want 12), back to the held one %g (want 7), "
+           "let go %g %g (want 3 0): %d\n", a1, b1, a2, a3, b3, notes_ok);
+    uint8_t cc[] = {0xbf, 26, 127,   /* morph: all the way, on channel 16 */
+                    0xb0, 117, 0,    /* BPM: the bottom */
+                    0xb0, 109, 127,  /* B muted */
+                    0xb0, 104, 0,    /* B size: the bottom */
+                    0xb0, 7, 64};    /* not one of ours */
+    midi_feed(cc, sizeof cc);
+    midi_poll();
+    int cc_ok = synth_get_param(syn, P_MORPH) == 1 && synth_get_param(syn, P_BPM) == param_info[P_BPM].min &&
+                synth_get_param(syn, P_B_MUTE) == 1 && !synth_get_param(syn, P_A_MUTE) &&
+                fabsf(synth_get_param(syn, P_B_SIZE) - param_info[P_B_SIZE].min) < 0.01f;
+    printf("miditest cc: morph 1, BPM the lowest, B muted, B size the smallest: %d\n", cc_ok);
+    ok = notes_ok && cc_ok;
+    printf("miditest: %s\n", ok ? "all good" : "FAILED");
+    return !ok;
+}
+
 int main(int argc, char **argv)
 {
     resolve_paths();
     update_detect_package(app_dir); /* TrimUI OS's zip, or MustardOS's .muxapp */
     if (argc >= 4 && !strcmp(argv[1], "--render")) return offline_render(argc, argv);
     if (argc >= 2 && !strcmp(argv[1], "--syncsim")) return sync_sim();
+    if (argc >= 2 && !strcmp(argv[1], "--midi-chart")) return midi_chart();
+    if (argc >= 2 && !strcmp(argv[1], "--miditest")) return midi_test();
 #ifndef RS_DEVICE
     if (argc >= 2 && !strcmp(argv[1], "--joytest")) return joy_test();
 #endif
@@ -3746,12 +3921,14 @@ int main(int argc, char **argv)
     fprintf(stderr, "radioscan v" RS_VERSION ": update check %s, from %s\n", update_auto ? "on" : "off", update_asset());
     fprintf(stderr, "radioscan: audio %s at %d Hz, %d frames/buffer\n", audio_ok ? "open" : "FAILED", audio_rate, buffer);
     ui.running = 1;
+    midi_start();
     perf_log("START", "running after %.2f s", (perf_now_us() - ev_t0) / 1e6);
     ev("start (event times are seconds since the app started, as the performance log's)");
     while (ui.running && !got_signal) {
         SDL_Event e;
         Uint32 now = SDL_GetTicks();
         while (SDL_PollEvent(&e)) on_event(&e, now);
+        midi_poll();
         held_keys_update(now);
         logic_update(now);
         sync_poll(now_us());
@@ -3766,6 +3943,7 @@ int main(int argc, char **argv)
     ev("quit");
     ev_flush();
     perf_close();
+    midi_stop();
     sync_close();
     save_settings();
     pthread_mutex_lock(&dev_mx);

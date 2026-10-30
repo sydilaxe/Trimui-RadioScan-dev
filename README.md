@@ -313,6 +313,20 @@ F1 and F2 are.
 
 The same zip works on every Brick: the plain Brick and the Brick Hammer have no stick, and nothing changes for them.
 
+## USB MIDI
+
+Plug a class-compliant MIDI keyboard or controller into the TrimUI's USB host port (the Brick's top USB-C). It
+works from any page:
+
+- **Notes:** channel 1 plays voice A's pitch, channel 2 voice B's. Middle C (60) is the voice's own PITCH, each key
+  a semitone from it; with every key let go, the voice goes back to its PITCH.
+- **CCs, on any channel:** 14-25 voice A's engine, pitch, size, texture, direction, focus, level, mute, pan, drive,
+  oscillator and osc mix; 102-113 the same for voice B; 3 and 9 their rhythms on and off; 26-31, 85-90 and 114-119
+  morph, filter, resonance, FM, ring, converse, vocode, drive, fold, crush, echo, space, width, volume, tempo,
+  bass and treble.
+
+[docs/MIDI.md](docs/MIDI.md) is the full MIDI implementation chart. `RS_MIDI=0` in `launch.sh` turns MIDI off.
+
 ## Wi-Fi sync
 
 RadioScan shares its clock with other units on the same Wi-Fi network that speak the same sync protocol.
