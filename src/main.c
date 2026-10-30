@@ -2806,11 +2806,47 @@ static SDL_Texture *tex;
 static SDL_Rect dst_rect;
 static int rotate; /* RS_ROTATE=90/180/270, for a firmware whose screen is turned */
 
+/* A display that is switched off and on (wake_screen.sh does that, as waking from sleep does) can take the renderer's
+ * picture with it: SDL then reports a reset, or drawing fails, and the screen stays black while the app runs on. So
+ * the texture (or the renderer and texture) is made again when SDL says so, when drawing fails, and once after the
+ * screen wake has had time to finish (RS_SCREEN_REBUILD=0: not). Each is logged. As in Jaffedrone. */
+static int screen_reset; /* 1: the texture, 2: the renderer and texture */
+static int draw_fails;
+static Uint32 last_rebuild;
+
+static void make_renderer(void)
+{
+    ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED);
+    if (!ren) ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_SOFTWARE);
+}
+
+static void make_texture(void)
+{
+    tex = ren ? SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, SCREEN_W, SCREEN_H) : NULL;
+    if (tex) SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_NONE); /* copied as it is, alpha and all (the pixels are opaque) */
+}
+
+static void screen_rebuild(int renderer, const char *why)
+{
+    if (tex) SDL_DestroyTexture(tex);
+    tex = NULL;
+    if (renderer) {
+        if (ren) SDL_DestroyRenderer(ren);
+        ren = NULL;
+        make_renderer();
+    }
+    make_texture();
+    last_rebuild = SDL_GetTicks();
+    perf_log("SCREEN", "%s made again (%s)%s%s", renderer ? "renderer and picture" : "picture", why,
+             tex ? "" : ": failed, ", tex ? "" : SDL_GetError());
+}
+
 /* RS_SCREEN_WAKE: a command to run once the window is on show. MustardOS's mux_launch.sh points it at
  * wake_screen.sh: on the Brick Pro the screen can stay dark when an app opens its window there, until waking from
  * sleep sets the display up again, so the script does what waking does. Run in the background (a double fork, so
  * nothing is left to reap), never waited for. As in Columbia Street, HI5 and Jaffedrone. */
 #define SCREEN_WAKE_FRAME 10 /* about a third of a second of frames */
+#define SCREEN_REBUILD_AFTER 75 /* frames after the wake: 2.5 s, past its second pass */
 static void screen_wake(void)
 {
     const char *cmd = getenv("RS_SCREEN_WAKE");
@@ -2830,12 +2866,37 @@ static void screen_wake(void)
 static void present(void)
 {
     static int frames;
-    SDL_UpdateTexture(tex, NULL, screen->pixels, screen->pitch);
-    SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
-    SDL_RenderClear(ren);
-    SDL_RenderCopyEx(ren, tex, NULL, &dst_rect, rotate, NULL, SDL_FLIP_NONE);
-    SDL_RenderPresent(ren);
+    /* opaque: the page is drawn with the alpha byte left at 0, and SDL copies it to the screen as it is. MustardOS's
+     * display shows the screen's alpha, so a picture with alpha 0 is black there (TrimUI OS ignores it). As in
+     * Jaffedrone. */
+    for (int y = 0; y < SCREEN_H; y++) {
+        Uint32 *row = (Uint32 *)((Uint8 *)screen->pixels + y * screen->pitch);
+        for (int x = 0; x < SCREEN_W; x++) row[x] |= 0xFF000000u;
+    }
+    if (screen_reset) {
+        screen_rebuild(screen_reset == 2, "SDL reset it");
+        screen_reset = 0;
+    }
+    int bad = !tex || SDL_UpdateTexture(tex, NULL, screen->pixels, screen->pitch) < 0;
+    if (ren) {
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+        SDL_RenderClear(ren);
+        bad |= !tex || SDL_RenderCopyEx(ren, tex, NULL, &dst_rect, rotate, NULL, SDL_FLIP_NONE) < 0;
+        SDL_RenderPresent(ren);
+    } else
+        bad = 1;
+    if (bad) {
+        if (draw_fails++ < 5) perf_log("SCREEN", "drawing failed: %s", SDL_GetError());
+        /* at most once a second: the texture first, then everything */
+        if (SDL_GetTicks() - last_rebuild > 1000) screen_rebuild(draw_fails > 2 || !ren, "drawing failed");
+    }
     if (++frames == SCREEN_WAKE_FRAME) screen_wake();
+    /* the wake has finished (it runs twice, a second apart): the renderer is made again in case the display took its
+     * picture with it */
+    const char *wake = getenv("RS_SCREEN_WAKE");
+    if (frames == SCREEN_WAKE_FRAME + SCREEN_REBUILD_AFTER && wake && *wake &&
+        (!getenv("RS_SCREEN_REBUILD") || atoi(getenv("RS_SCREEN_REBUILD"))))
+        screen_rebuild(1, "after the screen wake");
 }
 
 static int video_init(void)
@@ -2851,9 +2912,8 @@ static int video_init(void)
     if (!windowed && SDL_GetCurrentDisplayMode(0, &dm) == 0 && dm.w > 0 && dm.h > 0) sw = dm.w, sh = dm.h;
     win = SDL_CreateWindow("RadioScan", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, sw, sh,
                            SDL_WINDOW_SHOWN | (windowed ? 0 : SDL_WINDOW_FULLSCREEN));
-    ren = win ? SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED) : NULL;
-    if (win && !ren) ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_SOFTWARE);
-    tex = ren ? SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, SCREEN_W, SCREEN_H) : NULL;
+    if (win) make_renderer();
+    make_texture();
     if (!tex) {
         fprintf(stderr, "video: %s\n", SDL_GetError());
         return 0;
@@ -2910,6 +2970,10 @@ static void joy_map_init(void)
         for (int b = 0; b < B_COUNT; b++)
             if (pad_buttons[p][b] >= 0) joy_map[p][(int)pad_buttons[p][b]] = b;
     }
+    /* MustardOS's Brick Pro sends the two function buttons under the screen as 2 and 3 (0 and 1 are volume, left to
+     * MustardOS): they are F1 and F2 too, alongside the sticks' clicks */
+    joy_map[PAD_MUOS_BRICKPRO][2] = B_F1;
+    joy_map[PAD_MUOS_BRICKPRO][3] = B_F2;
     const char *m = getenv("RS_JOYMAP");
     while (m && *m) {
         char key[16];
@@ -3096,6 +3160,11 @@ static void on_event(const SDL_Event *e, Uint32 now)
     case SDL_AUDIODEVICEADDED:
     case SDL_AUDIODEVICEREMOVED:
         if (!e->adevice.iscapture) audio_hotplug();
+        break;
+    case SDL_RENDER_TARGETS_RESET:
+    case SDL_RENDER_DEVICE_RESET:
+        perf_log("SCREEN", "SDL says the %s was reset", e->type == SDL_RENDER_DEVICE_RESET ? "renderer" : "picture");
+        screen_reset = e->type == SDL_RENDER_DEVICE_RESET ? 2 : (screen_reset ? screen_reset : 1);
         break;
     }
 }

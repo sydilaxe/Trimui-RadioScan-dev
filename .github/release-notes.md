@@ -24,6 +24,13 @@ RadioScan checks for new releases when it starts and offers to update itself.
 - The important voice, engine and mix settings each have a MIDI CC, on any channel and from any page: 14-25
   voice A, 102-113 voice B, 3 and 9 their rhythms, 26-31, 85-90 and 114-119 the engine and mix.
 - `docs/MIDI.md` is the MIDI implementation chart.
+**Fix: the black screen on MustardOS, and F1 / F2 on the Brick Pro**
+- The picture is now sent to the screen opaque. Its pixels went out with their alpha (transparency) at 0, which
+  TrimUI OS ignores but MustardOS's display shows, so on MustardOS nothing the app drew was visible.
+- After MustardOS's screen wake the app makes its renderer again, and it rebuilds the picture whenever SDL reports
+  it lost or drawing fails. The log's `SCREEN` lines record each rebuild.
+- F1 and F2 (the two lit buttons under the screen) now work on a Brick Pro under MustardOS, which sends them as
+  buttons 2 and 3; the sticks' clicks still do the same.
 
 **New: MustardOS, and logs for tuning**
 - A package for MustardOS on the Brick, Brick Hammer and Brick Pro, installed from the Archive Manager. RadioScan
