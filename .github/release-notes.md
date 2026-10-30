@@ -1,17 +1,31 @@
-RadioScan, an internet-radio synthesizer for the TrimUI Brick, Brick Hammer and Brick Pro (TrimUI OS).
+RadioScan, an internet-radio synthesizer for the TrimUI Brick, Brick Hammer and Brick Pro (TrimUI OS and MustardOS).
 
-**Install**
+**Install on MustardOS**
+
+Copy `RadioScan-mustardos.muxapp` into the `ARCHIVE` folder of the first SD card, install it from **Applications →
+Archive Manager**, turn Wi-Fi on, then open **Applications → RadioScan**. Press MENU twice to quit.
+
+**Install on TrimUI OS**
 
 Unzip `RadioScan-trimui.zip` at the root of the SD card (it contains `Apps/RadioScan/`), turn Wi-Fi on, then open
-**Apps → RadioScan**. Press MENU twice to quit. The same zip works on all three devices.
+**Apps → RadioScan**. Press MENU twice to quit. Each package works on all three devices.
 
-Or, with the TrimUI's SSH server on, run this on a computer on the same network:
+Or, on either firmware, with the TrimUI's SSH server on, run this on a computer on the same network:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/sydilaxe/Trimui-RadioScan-dev/main/install.sh | bash
 ```
 
 RadioScan checks for new releases when it starts and offers to update itself.
+
+**New: MustardOS, and logs for tuning**
+- A package for MustardOS on the Brick, Brick Hammer and Brick Pro, installed from the Archive Manager. RadioScan
+  reads MustardOS's controller, so every button (and the Brick Pro's stick) works as on TrimUI OS, and it updates
+  itself from the MustardOS package.
+- The screen no longer stays dark on a Brick Pro under MustardOS.
+- `log.txt` now has a performance line every 10 s (audio load, dropouts, the screen, the processor's clock and
+  temperature) with hints on what to change, and `sysinfo.txt` a report of the system. `RS_LOG=2` in `launch.sh`
+  logs every second and every button press.
 
 **New on TrimUI**
 - Ported from the Miyoo Mini Plus: the same instrument and the same sound, on SDL2, the pages scaled 1.6x to fill
@@ -27,7 +41,8 @@ RadioScan checks for new releases when it starts and offers to update itself.
 - **Updates itself** from this repo's releases.
 
 If something is off, check `log.txt` in the app folder (it lists the controller, screen and sound device found, and
-notes any late audio buffers), and try these in `launch.sh` (uncomment the line):
+every 10 s the audio load, dropouts and the processor's state, with hints) and `sysinfo.txt`, and try these in
+`launch.sh` (uncomment the line):
 - Crackles or dropouts: `export RS_BUFFER=2048`.
 - A turned picture: `export RS_ROTATE=180`.
 - Buttons in the wrong place: `export RS_JOYMAP=A=1,B=0` (`log.txt` names any button it doesn't know).

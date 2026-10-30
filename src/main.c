@@ -1,4 +1,4 @@
-/* RadioScan — a synthesizer for the TrimUI Brick, Brick Hammer and Brick Pro (TrimUI OS) whose sound sources are
+/* RadioScan — a synthesizer for the TrimUI Brick, Brick Hammer and Brick Pro (TrimUI OS or MustardOS) whose sound sources are
  * internet radio streams. Ported from the Miyoo Mini Plus version: the same 640x480 pages, drawn into a buffer and
  * scaled to fill the screen through SDL2 (1.6x on the Brick's 1024x768).
  *
@@ -15,6 +15,7 @@
 #include <pthread.h>
 #include <sched.h>
 #include <sys/mman.h>
+#include <sys/wait.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -29,6 +30,7 @@
 #include "dsp.h"
 #include "font.h"
 #include "net.h"
+#include "perflog.h"
 #include "stations.h"
 #include "stream.h"
 #include "sync.h"
@@ -229,16 +231,15 @@ static void enable_flush_to_zero(void)
 #endif
 }
 
-/* Audio timing, for log.txt: a callback that comes much later than its buffer lasts means the sound dropped out
- * (a pop). Written by the audio thread, read and reported by the main thread. */
+/* Audio timing, for the event log and the stall watch: a callback that comes much later than its buffer lasts means
+ * the sound dropped out (a pop). Written by the audio thread, read by the main thread. The load, dropouts and
+ * gaps reported every 10 s come from the shared performance log (perflog.c). */
 static volatile unsigned aud_late, aud_calls;
 static volatile int aud_rt = -1;          /* real-time priority: 1 granted, 0 refused or turned off */
 static int aud_rt_wanted = 1;             /* RS_RT=0 turns it off */
 static volatile unsigned aud_epoch;       /* bumps each time the sound device is reopened */
 static volatile double aud_first_ms;      /* when steady audio started, to count missing buffers */
 static volatile float aud_buf_ms;
-static volatile float aud_run_sum_ms;
-static volatile float aud_worst_gap_ms, aud_worst_run_ms;
 static volatile float aud_recent_gap_ms;  /* longest gap since the main loop last looked (for the event log) */
 
 static uint64_t now_us(void)
@@ -263,14 +264,14 @@ static void audio_cb(void *ud, Uint8 *stream, int len)
         ftz = 1;
     }
     static double last_start;
-    double t0 = mono_ms(), buf_ms = len / 4 * 1000.0 / audio_rate;
+    uint64_t perf_t0 = perf_audio_begin(len / 4); /* the performance log's load and dropout counters */
+    double t0 = perf_t0 / 1000.0, buf_ms = len / 4 * 1000.0 / audio_rate;
     aclock_request((uint64_t)(t0 * 1000.0), len / 4);
     aud_buf_ms = (float)buf_ms;
     if (aud_calls == 20) aud_first_ms = t0;
     if (last_start > 0 && aud_calls > 20) { /* skip start-up */
         float gap = (float)(t0 - last_start);
         if (gap > buf_ms * 2.0) aud_late++; /* longer than two buffers: the driver's cushion is nearly gone */
-        if (gap > aud_worst_gap_ms) aud_worst_gap_ms = gap;
         if (gap > aud_recent_gap_ms) aud_recent_gap_ms = gap;
     }
     last_start = t0;
@@ -305,9 +306,7 @@ static void audio_cb(void *ud, Uint8 *stream, int len)
         frames -= n;
     }
     aclock_made(len / 4, synth_position(syn), synth_steps_per_frame(syn)); /* where the music is, for Wi-Fi sync */
-    float run = (float)(mono_ms() - t0);
-    if (run > aud_worst_run_ms) aud_worst_run_ms = run;
-    aud_run_sum_ms += run;
+    perf_audio_end(perf_t0);
 }
 
 /* ------------------------------------------------------------------ event log
@@ -316,7 +315,7 @@ static void audio_cb(void *ud, Uint8 *stream, int len)
  * caused it. Kept in memory and written to log.txt in one go every 10 s and on quit: no SD card write per press. */
 static char ev_buf[32 * 1024];
 static int ev_len;
-static Uint32 ev_t0;
+static uint64_t ev_t0; /* perf_now_us() at start: the same clock as the performance log's lines */
 
 static void ev_flush(void)
 {
@@ -329,8 +328,8 @@ static void ev_flush(void)
 static void ev(const char *fmt, ...)
 {
     if (ev_len > (int)sizeof ev_buf - 256) ev_flush(); /* full: rare, only during a long burst */
-    Uint32 t = SDL_GetTicks() - ev_t0;
-    ev_len += snprintf(ev_buf + ev_len, sizeof ev_buf - ev_len, "%5u.%03u ", t / 1000, t % 1000);
+    double t = (perf_now_us() - ev_t0) / 1e6;
+    ev_len += snprintf(ev_buf + ev_len, sizeof ev_buf - ev_len, "%9.3f ", t);
     va_list ap;
     va_start(ap, fmt);
     int n = vsnprintf(ev_buf + ev_len, sizeof ev_buf - ev_len, fmt, ap);
@@ -339,44 +338,24 @@ static void ev(const char *fmt, ...)
     if (ev_len < (int)sizeof ev_buf - 1) ev_buf[ev_len++] = '\n';
 }
 
-/* Every 10 s, a line in log.txt about the last 10 s: how many buffers the sound card would have gone without
- * ("missing": the audio thread fell behind real time, which is heard as dropouts), the longest wait between
- * buffers, the synth's average and slowest run against the time a buffer lasts, and the screen's drawing time.
- * Quiet unless something is late. */
-static float ui_frame_sum_ms, ui_frame_max_ms;
-static unsigned ui_frames;
-
+/* Every 10 s (every second with RS_LOG=2), the shared performance log's STAT line about the time since the last:
+ * the audio callback's load against the time a buffer lasts, dropouts (the sound card went without), the longest
+ * wait between buffers, the screen's frame rate and time, and the processor's clock, temperature and cores; HINT
+ * lines when something should change. The event log is written out first, so the lines stay in time order. */
 static void audio_report(Uint32 now)
 {
-    static Uint32 last;
-    static unsigned last_calls, last_late, said_rt;
-    static double last_missing;
-    static unsigned last_epoch;
-    if (aud_epoch != last_epoch) { last_epoch = aud_epoch; last_missing = 0; last_calls = 0; } /* reopened */
-    if (now - last < 10000) return;
-    last = now;
-    ev_flush();
-    if (!said_rt && aud_rt >= 0) {
-        fprintf(stderr, "audio: real-time priority %s, %.1f ms per buffer\n",
-                aud_rt ? "on" : aud_rt_wanted ? "refused" : "off (RS_RT=0)", aud_buf_ms);
-        said_rt = 1;
+    static int said_rt = -1;
+    if (aud_rt >= 0 && aud_rt != said_rt) {
+        said_rt = aud_rt;
+        perf_audio_rt(aud_rt);
+        if (!aud_rt) perf_log("AUDIO", "real-time priority %s", aud_rt_wanted ? "refused" : "off (RS_RT=0)");
     }
-    unsigned calls = aud_calls, late = aud_late;
-    double missing = aud_first_ms > 0 && aud_buf_ms > 0 ? (mono_ms() - aud_first_ms) / aud_buf_ms - (calls - 20) : 0;
-    if (late != last_late || missing - last_missing > 1.0) {
-        unsigned n = calls - last_calls ? calls - last_calls : 1;
-        fprintf(stderr, "audio: %u late, %.0f missing (total %.0f); longest gap %.1f ms; synth avg %.1f / max %.1f ms "
-                        "of %.1f; screen avg %.1f / max %.1f ms\n",
-                late - last_late, missing - last_missing > 0 ? missing - last_missing : 0, missing > 0 ? missing : 0,
-                aud_worst_gap_ms, aud_run_sum_ms / n, aud_worst_run_ms, aud_buf_ms,
-                ui_frames ? ui_frame_sum_ms / ui_frames : 0, ui_frame_max_ms);
+    perf_tick(); /* writes the event log out first (perf_before_stat) */
+    static Uint32 last_flush;
+    if (perf_level() == PERF_OFF && now - last_flush >= 10000) { /* no STAT lines: the events on their own */
+        last_flush = now;
+        ev_flush();
     }
-    last_calls = calls;
-    last_late = late;
-    last_missing = missing;
-    aud_worst_gap_ms = aud_worst_run_ms = aud_run_sum_ms = 0;
-    ui_frame_sum_ms = ui_frame_max_ms = 0;
-    ui_frames = 0;
 }
 
 /* ================================================================== drawing */
@@ -2561,8 +2540,7 @@ static int audio_open(const char *name)
     audio_open_ok = adev != 0;
     if (adev) {
         snprintf(adev_name, sizeof adev_name, "%s", name ? name : "");
-        fprintf(stderr, "audio out: %s, %d Hz, %d frames a buffer\n", name ? name : "speaker / headphones", audio_rate,
-                audio_buffer);
+        perf_audio_open(audio_rate, have.samples, name);
         SDL_PauseAudioDevice(adev, 0);
     } else
         fprintf(stderr, "audio: %s\n", SDL_GetError());
@@ -2820,13 +2798,36 @@ static SDL_Texture *tex;
 static SDL_Rect dst_rect;
 static int rotate; /* RS_ROTATE=90/180/270, for a firmware whose screen is turned */
 
+/* RS_SCREEN_WAKE: a command to run once the window is on show. MustardOS's mux_launch.sh points it at
+ * wake_screen.sh: on the Brick Pro the screen can stay dark when an app opens its window there, until waking from
+ * sleep sets the display up again, so the script does what waking does. Run in the background (a double fork, so
+ * nothing is left to reap), never waited for. As in Columbia Street, HI5 and Jaffedrone. */
+#define SCREEN_WAKE_FRAME 10 /* about a third of a second of frames */
+static void screen_wake(void)
+{
+    const char *cmd = getenv("RS_SCREEN_WAKE");
+    if (!cmd || !*cmd) return;
+    perf_log("SCREEN", "waking the screen: %s", cmd);
+    pid_t p = fork();
+    if (p == 0) {
+        if (fork() == 0) {
+            execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+            _exit(127);
+        }
+        _exit(0);
+    }
+    if (p > 0) waitpid(p, NULL, 0);
+}
+
 static void present(void)
 {
+    static int frames;
     SDL_UpdateTexture(tex, NULL, screen->pixels, screen->pitch);
     SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
     SDL_RenderClear(ren);
     SDL_RenderCopyEx(ren, tex, NULL, &dst_rect, rotate, NULL, SDL_FLIP_NONE);
     SDL_RenderPresent(ren);
+    if (++frames == SCREEN_WAKE_FRAME) screen_wake();
 }
 
 static int video_init(void)
@@ -2862,42 +2863,135 @@ static int video_init(void)
 }
 
 /* ================================================================== input
- * The TrimUI's buttons, as SDL sees them on TrimUI OS (NextUI and MinUI agree): buttons B 0, A 1, Y 2, X 3, L1 4,
- * R1 5, SELECT 6, START 7, MENU 8, and the Brick Pro's stick clicks L3 9 and R3 10; the d-pad is hat 0; L2 and R2
- * are axes 2 and 5; the Brick Pro's left stick is axes 0 and 1 (it sweeps the stations: see radio_scan).
- * RS_JOYMAP=A=1,B=0,... sets another firmware's button numbers; a button that isn't mapped is noted in log.txt when
- * pressed. */
-static int joy_map[32];
+ * The buttons, as SDL sees them. The d-pad is hat 0 everywhere.
+ *   TrimUI OS (NextUI and MinUI agree): the TrimUI's own controller: B 0, A 1, Y 2, X 3, L1 4, R1 5, SELECT 6,
+ *     START 7, MENU 8; L2 and R2 are axes 2 and 5; the Brick Pro's left stick is axes 0, 1.
+ *   MustardOS: its "muOS-Keys" controller, numbered as in MustardOS's own controller maps (device/tui-brick*),
+ *     which differ between the Brick and the Brick Pro. L2 and R2 are buttons; the Brick Pro's left stick is
+ *     axes 0, 1. One build serves both devices, so which one it is comes from the controller (product 2: Brick,
+ *     3: Brick Pro), else from the board MustardOS names.
+ * The Brick Pro's left stick sweeps the stations (see radio_scan), its right stick plays morph and the filter (see
+ * rstick_apply), and its clicks are L3 and R3. RS_JOYMAP=A=1,B=0,... sets another firmware's button numbers
+ * (for every controller); a button that isn't mapped is noted in log.txt when pressed. As in Columbia Street, HI5
+ * and Jaffedrone. */
+enum { PAD_TRIMUI, PAD_MUOS_BRICK, PAD_MUOS_BRICKPRO, PAD_KINDS };
+static const char *const pad_names[PAD_KINDS] = {"TrimUI OS", "MustardOS (Brick)", "MustardOS (Brick Pro)"};
+/* each pad's button numbers, in the order of the B_ enum (which ends with L3 and R3) */
+#define JB_COUNT B_COUNT
+static const signed char pad_buttons[PAD_KINDS][JB_COUNT] = {
+    /*                     UP  DN  LT  RT  A  B  X  Y  L1  R1  L2  R2  SEL STA MENU L3  R3 */
+    [PAD_TRIMUI]        = {-1, -1, -1, -1, 1, 0, 3, 2, 4,  5,  -1, -1, 6,  7,  8,   9,  10},
+    [PAD_MUOS_BRICK]    = {-1, -1, -1, -1, 5, 4, 6, 7, 8,  9,  10, 11, 12, 13, 14,  15, 16},
+    [PAD_MUOS_BRICKPRO] = {-1, -1, -1, -1, 6, 5, 7, 8, 9,  10, 11, 12, 13, 14, 15,  16, 17},
+};
+static const char *const jb_names[JB_COUNT] = {"UP", "DOWN", "LEFT", "RIGHT", "A", "B", "X", "Y", "L1",
+                                               "R1", "L2", "R2", "SELECT", "START", "MENU", "L3", "R3"};
+/* what each pad's axes do */
+enum { AX_NONE, AX_L2, AX_R2, AX_LX, AX_LY, AX_RX, AX_RY };
+#define PAD_AXES 6
+static const unsigned char pad_axes[PAD_KINDS][PAD_AXES] = {
+    [PAD_TRIMUI] = {AX_LX, AX_LY, AX_L2, AX_RX, AX_RY, AX_R2},
+    [PAD_MUOS_BRICK] = {AX_NONE},
+    [PAD_MUOS_BRICKPRO] = {AX_LX, AX_LY, AX_RX, AX_RY},
+};
+/* joy_map[pad][SDL button]: a B_ or B_NONE */
+static int joy_map[PAD_KINDS][32];
 
 static void joy_map_init(void)
 {
-    static const int def[] = {B_B, B_A, B_Y, B_X, B_L1, B_R1, B_SELECT, B_START, B_MENU, B_L3, B_R3};
-    static const char *const names[B_COUNT] = {"UP", "DOWN", "LEFT", "RIGHT", "A", "B", "X", "Y",
-                                               "L1", "R1", "L2", "R2", "SELECT", "START", "MENU", "L3", "R3"};
-    for (int i = 0; i < 32; i++) joy_map[i] = i < (int)(sizeof def / sizeof def[0]) ? def[i] : B_NONE;
+    for (int p = 0; p < PAD_KINDS; p++) {
+        for (int i = 0; i < 32; i++) joy_map[p][i] = B_NONE;
+        for (int b = 0; b < JB_COUNT; b++)
+            if (pad_buttons[p][b] >= 0) joy_map[p][(int)pad_buttons[p][b]] = b;
+    }
     const char *m = getenv("RS_JOYMAP");
     while (m && *m) {
         char key[16];
         int num;
         if (sscanf(m, "%15[^=]=%d", key, &num) == 2 && num >= 0 && num < 32)
-            for (int b = 0; b < B_COUNT; b++)
-                if (!strcasecmp(key, names[b])) {
-                    for (int i = 0; i < 32; i++)
-                        if (joy_map[i] == b) joy_map[i] = B_NONE;
-                    joy_map[num] = b;
-                }
+            for (int b = 0; b < JB_COUNT; b++)
+                if (!strcasecmp(key, jb_names[b]))
+                    for (int p = 0; p < PAD_KINDS; p++) {
+                        for (int i = 0; i < 32; i++)
+                            if (joy_map[p][i] == b) joy_map[p][i] = B_NONE;
+                        joy_map[p][num] = b;
+                    }
         m = strchr(m, ',');
         if (m) m++;
     }
+}
+
+/* the open controllers, by SDL instance id, and which kind each is */
+#define MAX_PADS 8
+static struct {
+    SDL_JoystickID id;
+    int kind;
+} pads[MAX_PADS];
+static int npads;
+
+/* vendor and product from the GUID (Linux: bytes 4-5 and 8-9, little-endian), which every SDL2 has, unlike
+ * SDL_JoystickGetVendor */
+static int pad_vendor(SDL_Joystick *j)
+{
+    SDL_JoystickGUID g = SDL_JoystickGetGUID(j);
+    return g.data[4] | g.data[5] << 8;
+}
+static int pad_product(SDL_Joystick *j)
+{
+    SDL_JoystickGUID g = SDL_JoystickGetGUID(j);
+    return g.data[8] | g.data[9] << 8;
+}
+
+/* MustardOS's controller: named muOS-Keys, vendor 0x756d ("mu"); product 2 on the Brick and Brick Hammer, 3 on
+ * the Brick Pro. Otherwise the board MustardOS names (tui-brick, tui-brick-pro), else its button count. */
+static int pad_kind(SDL_Joystick *j)
+{
+    const char *name = SDL_JoystickName(j);
+    if (!(name && strcasestr(name, "muos")) && pad_vendor(j) != 0x756d) return PAD_TRIMUI;
+    switch (pad_product(j)) {
+    case 2: return PAD_MUOS_BRICK;
+    case 3: return PAD_MUOS_BRICKPRO;
+    }
+    char board[64] = "";
+    FILE *f = fopen("/opt/muos/device/config/board/name", "r");
+    if (f) {
+        if (!fgets(board, sizeof board, f)) board[0] = 0;
+        fclose(f);
+    }
+    if (board[0]) return strstr(board, "pro") ? PAD_MUOS_BRICKPRO : PAD_MUOS_BRICK;
+    return SDL_JoystickNumButtons(j) > 17 ? PAD_MUOS_BRICKPRO : PAD_MUOS_BRICK;
+}
+
+/* which map an event uses, or -1 to ignore it: when MustardOS's controller is there, it alone is read, so a press
+ * can't arrive twice through the TrimUI's own controller underneath it */
+static int event_pad(SDL_JoystickID id)
+{
+    int muos = 0, kind = -1;
+    for (int i = 0; i < npads; i++) {
+        muos |= pads[i].kind != PAD_TRIMUI;
+        if (pads[i].id == id) kind = pads[i].kind;
+    }
+    if (kind < 0) return PAD_TRIMUI; /* not seen opening: as before */
+    return muos && kind == PAD_TRIMUI ? -1 : kind;
 }
 
 static void open_joysticks(void)
 {
     for (int i = 0; i < SDL_NumJoysticks(); i++) {
         SDL_Joystick *j = SDL_JoystickOpen(i);
-        if (j)
-            fprintf(stderr, "controller %d: %s, %d buttons, %d axes, %d hats\n", i, SDL_JoystickName(j),
-                    SDL_JoystickNumButtons(j), SDL_JoystickNumAxes(j), SDL_JoystickNumHats(j));
+        if (!j) continue;
+        SDL_JoystickID id = SDL_JoystickInstanceID(j);
+        int known = 0;
+        for (int k = 0; k < npads; k++) known |= pads[k].id == id;
+        if (known) { /* already open: drop the extra reference */
+            SDL_JoystickClose(j);
+            continue;
+        }
+        int kind = pad_kind(j);
+        if (npads < MAX_PADS) pads[npads].id = id, pads[npads].kind = kind, npads++;
+        fprintf(stderr, "controller %d: %s (%04x:%04x), %d buttons, %d axes, %d hats: %s buttons\n", i,
+                SDL_JoystickName(j), pad_vendor(j), pad_product(j), SDL_JoystickNumButtons(j), SDL_JoystickNumAxes(j),
+                SDL_JoystickNumHats(j), pad_names[kind]);
     }
 }
 
@@ -2925,22 +3019,28 @@ static void dpad_update(Uint32 now)
     for (int i = 0; i < 4; i++) button(btn[i], (dpad_hat & bit[i]) != 0, now);
 }
 
-static void on_axis(int axis, int v, Uint32 now)
+/* a stick axis as -1..1, the centre's dead zone removed */
+static float stick_value(int v)
+{
+    float x = v / 32767.0f, a = fabsf(x);
+    return a < 0.2f ? 0.0f : (x > 0 ? 1.0f : -1.0f) * fminf((a - 0.2f) / 0.75f, 1.0f);
+}
+
+static void on_axis(int role, int v, Uint32 now)
 {
     static int trig[2];
-    if (axis == 2 || axis == 5) { /* L2, R2: pressed past halfway, let go below a quarter */
-        int t = axis == 5;
+    if (role == AX_L2 || role == AX_R2) { /* L2, R2: pressed past halfway, let go below a quarter */
+        int t = role == AX_R2;
         int down = trig[t] ? v > 8192 : v > 16384;
         if (down != trig[t]) {
             trig[t] = down;
+            if (perf_level() == PERF_DETAIL) perf_log("INPUT", "%s %s (axis at %d)", t ? "R2" : "L2", down ? "down" : "up", v);
             button(t ? B_R2 : B_L2, down, now);
         }
-    } else if (axis == 0 || axis == 1 || axis == 3 || axis == 4) {
-        /* the left stick sweeps the stations (across voice A, up and down voice B); the right one plays the sound */
-        float x = v / 32767.0f, a = fabsf(x);
-        x = a < 0.2f ? 0.0f : (x > 0 ? 1.0f : -1.0f) * fminf((a - 0.2f) / 0.75f, 1.0f); /* centre dead zone removed */
-        if (axis < 2) sweep[axis] = x;
-        else rstick[axis - 3] = x;
+    } else if (role == AX_LX || role == AX_LY) { /* the left stick sweeps the stations: across A, up and down B */
+        sweep[role == AX_LY] = stick_value(v);
+    } else if (role == AX_RX || role == AX_RY) { /* the right stick plays morph and the filter by hand */
+        rstick[role == AX_RY] = stick_value(v);
     }
 }
 
@@ -2954,19 +3054,39 @@ static void on_event(const SDL_Event *e, Uint32 now)
         break;
     case SDL_JOYBUTTONDOWN:
     case SDL_JOYBUTTONUP: {
-        int b = e->jbutton.button, m = b < 32 ? joy_map[b] : B_NONE;
-        if (m != B_NONE) button(m, e->type == SDL_JOYBUTTONDOWN, now);
-        else if (e->type == SDL_JOYBUTTONDOWN) ev("button %d (not used)", b); /* worth knowing on a new firmware */
+        int pad = event_pad(e->jbutton.which), down = e->type == SDL_JOYBUTTONDOWN;
+        int b = e->jbutton.button, m = pad >= 0 && b < 32 ? joy_map[pad][b] : B_NONE;
+        /* every press, raw and as read: for checking a firmware's numbering */
+        if (perf_level() == PERF_DETAIL)
+            perf_log("INPUT", "controller %d button %d %s: %s", (int)e->jbutton.which, b, down ? "down" : "up",
+                     pad < 0 ? "ignored (MustardOS's controller is read instead)" : m != B_NONE ? jb_names[m] : "not used");
+        if (pad < 0) break;
+        if (m != B_NONE && m < B_COUNT) button(m, down, now);
+        else if (m == B_NONE && down) ev("button %d (not used)", b); /* worth knowing on a new firmware */
         break;
     }
     case SDL_JOYHATMOTION:
-        if (e->jhat.hat == 0) {
+        if (perf_level() == PERF_DETAIL)
+            perf_log("INPUT", "controller %d hat %d: %d", (int)e->jhat.which, e->jhat.hat, e->jhat.value);
+        if (e->jhat.hat == 0 && event_pad(e->jhat.which) >= 0) {
             dpad_hat = e->jhat.value;
             dpad_update(now);
         }
         break;
-    case SDL_JOYAXISMOTION: on_axis(e->jaxis.axis, e->jaxis.value, now); break;
+    case SDL_JOYAXISMOTION: {
+        int pad = event_pad(e->jaxis.which);
+        int role = pad >= 0 && e->jaxis.axis < PAD_AXES ? pad_axes[pad][e->jaxis.axis] : AX_NONE;
+        on_axis(role, e->jaxis.value, now);
+        break;
+    }
     case SDL_JOYDEVICEADDED: open_joysticks(); break;
+    case SDL_JOYDEVICEREMOVED:
+        for (int i = 0; i < npads; i++)
+            if (pads[i].id == e->jdevice.which) {
+                pads[i] = pads[--npads];
+                break;
+            }
+        break;
     case SDL_AUDIODEVICEADDED:
     case SDL_AUDIODEVICEREMOVED:
         if (!e->adevice.iscapture) audio_hotplug();
@@ -3368,8 +3488,52 @@ static int joy_test(void)
     jt_button(0, 1);
     int a = ui.held[B_A];
     jt_button(0, 0);
-    JT_CHECK("RS_JOYMAP=A=0,B=1", a && joy_map[1] == B_B);
+    JT_CHECK("RS_JOYMAP=A=0,B=1", a && joy_map[PAD_TRIMUI][1] == B_B);
+
+    /* MustardOS on a Brick Pro: its "muOS-Keys" controller (vendor "mu", product 3) beside the TrimUI's own,
+     * numbered as MustardOS's tui-brick-pro map, L2 and R2 as buttons; the TrimUI's controller is then ignored */
+    unsetenv("RS_JOYMAP");
+    joy_map_init();
+    open_joysticks(); /* the TrimUI's, as the app opens it at start */
+    SDL_VirtualJoystickDesc d;
+    SDL_zero(d);
+    d.version = SDL_VIRTUAL_JOYSTICK_DESC_VERSION;
+    d.type = SDL_JOYSTICK_TYPE_GAMECONTROLLER;
+    d.naxes = 4, d.nbuttons = 18, d.nhats = 1;
+    d.vendor_id = 0x756d, d.product_id = 3;
+    d.name = "muOS-Keys";
+    int midx = SDL_JoystickAttachVirtualEx(&d);
+    jt_pump(); /* the device arrives: opened and recognised */
+    SDL_Joystick *mj = NULL;
+    for (int i = 0; i < npads; i++)
+        if (pads[i].kind == PAD_MUOS_BRICKPRO) mj = SDL_JoystickFromInstanceID(pads[i].id);
+    JT_CHECK("MustardOS's controller found (Brick Pro)", mj != NULL);
+    if (mj) {
+        static const struct { int n, b; const char *what; } mux[] = {
+            {6, B_A, "MustardOS A (6)"}, {5, B_B, "MustardOS B (5)"}, {11, B_L2, "MustardOS L2 (11)"},
+            {12, B_R2, "MustardOS R2 (12)"}, {13, B_SELECT, "MustardOS SELECT (13)"}};
+        ui.screen = SCR_PLAY;
+        for (int i = 0; i < 5; i++) {
+            SDL_JoystickSetVirtualButton(mj, mux[i].n, 1), jt_pump();
+            int held = ui.held[mux[i].b];
+            SDL_JoystickSetVirtualButton(mj, mux[i].n, 0), jt_pump();
+            JT_CHECK(mux[i].what, held && !ui.held[mux[i].b]);
+        }
+        SDL_JoystickSetVirtualAxis(mj, 1, -32767), jt_pump();
+        int mup = sweep[1] == -1.0f && !ui.held[B_UP];
+        SDL_JoystickSetVirtualAxis(mj, 1, 0), jt_pump();
+        SDL_JoystickSetVirtualAxis(mj, 2, 32767), jt_pump();
+        int mrx = rstick[0] == 1.0f;
+        SDL_JoystickSetVirtualAxis(mj, 2, 0), jt_pump();
+        JT_CHECK("MustardOS left stick (axis 1) sweeps, right stick (axis 2) plays",
+                 mup && sweep[1] == 0.0f && mrx && rstick[0] == 0.0f);
+        jt_button(1, 1); /* the TrimUI's A underneath: ignored, or a press would arrive twice */
+        int twice = ui.held[B_A];
+        jt_button(1, 0);
+        JT_CHECK("the TrimUI's controller ignored under MustardOS's", !twice);
+    }
     printf("joytest: %s\n", ok ? "all good" : "FAILED");
+    SDL_JoystickDetachVirtual(midx);
     SDL_JoystickClose(jt);
     SDL_JoystickDetachVirtual(idx);
     SDL_Quit();
@@ -3380,6 +3544,7 @@ static int joy_test(void)
 int main(int argc, char **argv)
 {
     resolve_paths();
+    update_detect_package(app_dir); /* TrimUI OS's zip, or MustardOS's .muxapp */
     if (argc >= 4 && !strcmp(argv[1], "--render")) return offline_render(argc, argv);
     if (argc >= 2 && !strcmp(argv[1], "--syncsim")) return sync_sim();
 #ifndef RS_DEVICE
@@ -3442,6 +3607,9 @@ int main(int argc, char **argv)
     }
 
     fprintf(stderr, "radioscan v" RS_VERSION " for TrimUI\n");
+    if (!shot) perf_init("RS", NULL); /* the performance log, in log.txt (RS_LOG); one build for both devices */
+    ev_t0 = perf_now_us();
+    perf_before_stat(ev_flush); /* the event log is written out with each STAT line, so the lines stay in order */
     /* 1 GB: the program and its buffers stay in memory, so the sound never waits for a page to be read back in */
 #ifdef RS_DEVICE
     if (!shot && (!getenv("RS_MLOCK") || atoi(getenv("RS_MLOCK"))) && mlockall(MCL_CURRENT | MCL_FUTURE) != 0)
@@ -3555,11 +3723,11 @@ int main(int argc, char **argv)
 #endif
     if (getenv("RS_UPDATE")) update_auto = atoi(getenv("RS_UPDATE")) != 0;
     ui.update_next_check = SDL_GetTicks() + 5000;
-    fprintf(stderr, "radioscan v" RS_VERSION ": update check %s\n", update_auto ? "on" : "off");
+    fprintf(stderr, "radioscan v" RS_VERSION ": update check %s, from %s\n", update_auto ? "on" : "off", update_asset());
     fprintf(stderr, "radioscan: audio %s at %d Hz, %d frames/buffer\n", audio_ok ? "open" : "FAILED", audio_rate, buffer);
     ui.running = 1;
-    ev_t0 = SDL_GetTicks();
-    ev("start (event times are seconds since this line)");
+    perf_log("START", "running after %.2f s", (perf_now_us() - ev_t0) / 1e6);
+    ev("start (event times are seconds since the app started, as the performance log's)");
     while (ui.running && !got_signal) {
         SDL_Event e;
         Uint32 now = SDL_GetTicks();
@@ -3570,16 +3738,14 @@ int main(int argc, char **argv)
         double f0 = mono_ms();
         render();
         present();
-        float fms = (float)(mono_ms() - f0);
-        ui_frame_sum_ms += fms;
-        if (fms > ui_frame_max_ms) ui_frame_max_ms = fms;
-        ui_frames++;
+        perf_frame((uint64_t)((mono_ms() - f0) * 1000.0));
         Uint32 spent = SDL_GetTicks() - now; /* ~30 frames per second, whatever the drawing cost */
         if (spent < 33) SDL_Delay(33 - spent);
     }
 
     ev("quit");
     ev_flush();
+    perf_close();
     sync_close();
     save_settings();
     pthread_mutex_lock(&dev_mx);

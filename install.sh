@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Install or update RadioScan on a TrimUI Brick, Brick Hammer or Brick Pro (TrimUI OS). Run it
-# on a computer on the same network as the TrimUI:
+# Install or update RadioScan on a TrimUI Brick, Brick Hammer or Brick Pro, running TrimUI OS or
+# MustardOS. Run it on a computer on the same network as the TrimUI:
 #
 #   curl -fsSL https://raw.githubusercontent.com/sydilaxe/Trimui-RadioScan-dev/main/install.sh | bash
 #
 # It finds the TrimUI over SSH (the firmware's SSH server must be on), compares the installed
-# version with the latest GitHub release, and copies the new build to SD:/Apps/RadioScan if the
-# release is newer. Your stations.txt and settings.cfg stay as they are.
+# version with the latest GitHub release, and copies the new build there if the release is newer:
+# to SD:/Apps/RadioScan on TrimUI OS, or to MustardOS's application folder (MUOS/application/
+# RadioScan) on MustardOS, which it tells apart by itself. Your stations.txt and settings.cfg stay
+# as they are.
 #
 #   RS_HOST=192.168.1.28    skip the scan and use this address
 #   RS_USER=root            SSH user (root by default)
@@ -17,8 +19,8 @@
 set -euo pipefail
 
 REPO=sydilaxe/Trimui-RadioScan-dev
-ASSET=RadioScan-trimui.zip
-APPS=/mnt/SDCARD/Apps
+APPS=/mnt/SDCARD/Apps                       # TrimUI OS
+MUX_APPS=/run/muos/storage/application     # MustardOS: SD2's or SD1's MUOS/application
 SSH_USER=${RS_USER:-root}
 SAVED=${XDG_CONFIG_HOME:-$HOME/.config}/radioscan-trimui/host
 
@@ -110,7 +112,7 @@ on_device() {
 }
 
 main() {
-    local c latest installed
+    local c latest installed os asset dest src where
 
     for c in curl unzip ssh tar awk; do
         command -v "$c" >/dev/null || die "this needs $c"
@@ -137,14 +139,24 @@ main() {
     [ -n "$host" ] || scan
 
     say "connecting to $SSH_USER@$host"
-    # first line: the installed version (empty if none); second: "stations" if the user has a station list
-    installed=$(on_device "test -d $APPS || exit 3; cat $APPS/RadioScan/VERSION 2>/dev/null; echo;
-                          test -f $APPS/RadioScan/stations.txt && echo stations; true" </dev/null) ||
+    # first line: the firmware (trimui / mustardos); second: the installed version (empty if none);
+    # third: "stations" if the user has a station list
+    installed=$(on_device "if [ -d /opt/muos ]; then echo mustardos; d='$MUX_APPS/RadioScan';
+                          else test -d $APPS || exit 3; echo trimui; d=$APPS/RadioScan; fi
+                          cat \"\$d/VERSION\" 2>/dev/null; echo;
+                          test -f \"\$d/stations.txt\" && echo stations; true" </dev/null) ||
         die "couldn't log in to $host, or it has no $APPS (is it the TrimUI card?)"
     mkdir -p "$(dirname "$SAVED")" && echo "$host" >"$SAVED"
     local has_stations=
     [[ $installed == *stations ]] && has_stations=1
-    installed=$(printf '%s\n' "$installed" | head -n 1)
+    os=$(printf '%s\n' "$installed" | sed -n 1p)
+    installed=$(printf '%s\n' "$installed" | sed -n 2p)
+    if [ "$os" = mustardos ]; then
+        asset=RadioScan-mustardos.muxapp dest=$MUX_APPS where=Applications
+        say "the TrimUI runs MustardOS"
+    else
+        asset=RadioScan-trimui.zip dest=$APPS where=Apps
+    fi
 
     if [ -z "$installed" ]; then
         say "the TrimUI has no RadioScan yet"
@@ -160,16 +172,19 @@ main() {
     fi
 
     say "downloading v$latest..."
-    curl -fsSL -o "$tmp/$ASSET" "https://github.com/$REPO/releases/download/v$latest/$ASSET"
-    unzip -q "$tmp/$ASSET" -d "$tmp/zip"
-    [ -f "$tmp/zip/Apps/RadioScan/radioscan" ] || die "the release zip has no Apps/RadioScan/radioscan"
+    curl -fsSL -o "$tmp/$asset" "https://github.com/$REPO/releases/download/v$latest/$asset"
+    unzip -q "$tmp/$asset" -d "$tmp/zip"
+    # the TrimUI OS zip holds Apps/RadioScan, the .muxapp RadioScan
+    src="$tmp/zip/Apps"
+    [ "$os" = mustardos ] && src="$tmp/zip"
+    [ -f "$src/RadioScan/radioscan" ] || die "the release's $asset has no RadioScan/radioscan"
     # the station list is the user's once it exists (RadioScan saves added and scanned stations there)
-    [ -n "$has_stations" ] && rm -f "$tmp/zip/Apps/RadioScan/stations.txt"
+    [ -n "$has_stations" ] && rm -f "$src/RadioScan/stations.txt"
 
-    say "copying to $host:$APPS/RadioScan..."
-    (cd "$tmp/zip/Apps" && COPYFILE_DISABLE=1 tar --format=ustar -cf - RadioScan) |
-        on_device "tar -xf - -C $APPS && sync"
-    say "RadioScan v$latest is installed. Launch it from Apps."
+    say "copying to $host:$dest/RadioScan..."
+    (cd "$src" && COPYFILE_DISABLE=1 tar --format=ustar -cf - RadioScan) |
+        on_device "mkdir -p '$dest' && tar -xf - -C '$dest' && sync"
+    say "RadioScan v$latest is installed. Launch it from $where."
 }
 
 # everything runs from here, so bash has read the whole script before `curl | bash` starts it
