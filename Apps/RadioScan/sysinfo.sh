@@ -9,7 +9,7 @@
 #   sysinfo.sh start NAME    write the report and start sampling (launch.sh, before the app)
 #   sysinfo.sh stop NAME     stop sampling (launch.sh, after the app)
 #
-# Shared by the TrimUI ports (Jaffedrone, HI5, RadioScan); keep the copies the same.
+# Shared by the TrimUI ports (Jaffedrone, HI5, RadioScan, Columbia Street); keep the copies the same.
 
 cmd=$1
 name=${2:-app}
@@ -50,6 +50,8 @@ fi
     echo "-- sound: environment"
     echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR PIPEWIRE_RUNTIME_DIR=$PIPEWIRE_RUNTIME_DIR" \
         "SDL_AUDIODRIVER=$SDL_AUDIODRIVER ALSA_CONFIG=$ALSA_CONFIG PIPEWIRE_LATENCY=$PIPEWIRE_LATENCY"
+    echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+    ls -l /usr/lib/libSDL2* /usr/trimui/lib/libSDL2* /opt/muos/frontend/lib/libSDL2* 2>/dev/null
     if command -v wpctl >/dev/null 2>&1; then
         echo "-- sound: PipeWire"
         XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run} wpctl status 2>&1 | head -n 60
