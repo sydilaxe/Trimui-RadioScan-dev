@@ -230,38 +230,58 @@ void perf_audio_end(uint64_t t0)
         SET(a_us_max, spent);
 }
 
-/* JUMP: the second difference of the output (how sharply it turns) against
- * the sharpest turn of the last ~50 ms: a click turns far more sharply than
- * the sound around it, while a square wave, a crushed sound or a drum's
- * edges come again and again and raise the bar for themselves. Checked
- * across buffers too, where a gap would land. */
-static float j_prev[2][2], j_avg = 1.f; /* j_avg: the decaying peak (starts high: no jump at the very start) */
+/* JUMP: a click is an isolated sharp turn in the output: its second
+ * difference (how sharply it turns) far above the sharpest of the last
+ * ~50 ms, and the sound just after it smooth again (a step or a lone bad
+ * sample, as a gap or a cut leaves). A drum, a burst of noise or a crushed
+ * sound turns sharply and stays rough, and a square wave's edges come again
+ * and again, so neither counts. Checked across buffers too, where a gap
+ * would land. */
+#define J_AFTER 72 /* samples looked at after a candidate: 1.5 ms at 48 kHz */
+static float j_prev[2][2], j_pk = 1.f; /* the decaying peak (starts high: no jump at the very start) */
+static float j_cand, j_cand_typ, j_after_sum;
+static int j_after_left = -1, j_skip;
 static uint32_t j_count, j_logged_at_s = UINT32_MAX;
 static volatile float j_size, j_typ;
 static volatile uint32_t j_when_ms, j_new;
 
+static void jump_found(float size, float typ)
+{
+    ADD(j_count, 1);
+    uint32_t ms = (uint32_t)((perf_now_us() - t_start) / 1000);
+    if (ms / 1000 != j_logged_at_s) { /* at most one a second for the log */
+        j_logged_at_s = ms / 1000;
+        j_size = size, j_typ = typ, j_when_ms = ms;
+        __atomic_store_n(&j_new, 1, __ATOMIC_RELEASE);
+    }
+}
+
 void perf_audio_output(const int16_t *s, int frames)
 {
-    float avg = j_avg, worst = 0.f, typ = 0.f;
-    for (int i = 0; i < frames; i++)
+    float pk = j_pk;
+    for (int i = 0; i < frames; i++) {
+        float d = 0.f; /* the sharper channel's turn */
         for (int c = 0; c < 2; c++) {
             float x = s[i * 2 + c] / 32768.f;
-            float d = fabsf(x - 2.f * j_prev[c][1] + j_prev[c][0]);
+            float dc = fabsf(x - 2.f * j_prev[c][1] + j_prev[c][0]);
             j_prev[c][0] = j_prev[c][1], j_prev[c][1] = x;
-            if (d > 0.2f && d > 4.f * avg && d > worst)
-                worst = d, typ = avg;
-            avg = d > avg ? d : avg * 0.99971f; /* half its height in ~50 ms at 48 kHz */
+            if (dc > d)
+                d = dc;
         }
-    j_avg = avg;
-    if (worst > 0.f) {
-        ADD(j_count, 1);
-        uint32_t ms = (uint32_t)((perf_now_us() - t_start) / 1000);
-        if (ms / 1000 != j_logged_at_s) { /* at most one a second for the log */
-            j_logged_at_s = ms / 1000;
-            j_size = worst, j_typ = typ, j_when_ms = ms;
-            __atomic_store_n(&j_new, 1, __ATOMIC_RELEASE);
+        if (j_after_left >= 0) { /* after a candidate: is the sound smooth again? */
+            if (j_skip > 0)
+                j_skip--; /* a step turns twice, the second the other way: not counted */
+            else
+                j_after_sum += d;
+            if (--j_after_left < 0 && j_after_sum / (J_AFTER - 2) < j_cand * 0.06f)
+                jump_found(j_cand, j_cand_typ);
         }
+        else if (d > 0.2f && d > 4.f * pk) {
+            j_cand = d, j_cand_typ = pk, j_after_sum = 0.f, j_after_left = J_AFTER, j_skip = 2;
+        }
+        pk = d > pk ? d : pk * 0.99971f; /* half its height in ~50 ms at 48 kHz */
     }
+    j_pk = pk;
 }
 
 void perf_before_stat(void (*fn)(void)) { before_stat = fn; }
