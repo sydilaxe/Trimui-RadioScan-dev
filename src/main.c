@@ -2975,10 +2975,11 @@ static void joy_map_init(void)
         for (int b = 0; b < B_COUNT; b++)
             if (pad_buttons[p][b] >= 0) joy_map[p][(int)pad_buttons[p][b]] = b;
     }
-    /* MustardOS's Brick Pro sends the two function buttons under the screen as 2 and 3 (0 and 1 are volume, left to
-     * MustardOS): they are F1 and F2 too, alongside the sticks' clicks */
-    joy_map[PAD_MUOS_BRICKPRO][2] = B_F1;
-    joy_map[PAD_MUOS_BRICKPRO][3] = B_F2;
+    /* MustardOS's Brick Pro sends the two function buttons under the screen as 0 and 1 (its keys F1 and F2, which SDL
+     * numbers first; 2 and 3 are volume down and up, left to MustardOS, 4 is HOME; MustardOS's
+     * input/devices/tui-brick-pro): they are F1 and F2 too, alongside the sticks' clicks */
+    joy_map[PAD_MUOS_BRICKPRO][0] = B_F1;
+    joy_map[PAD_MUOS_BRICKPRO][1] = B_F2;
     const char *m = getenv("RS_JOYMAP");
     while (m && *m) {
         char key[16];
@@ -3626,6 +3627,10 @@ static int joy_test(void)
         int twice = ui.held[B_A];
         jt_button(1, 0);
         JT_CHECK("the TrimUI's controller ignored under MustardOS's", !twice);
+        /* the lit buttons under the screen are MustardOS's 0 and 1; 2 and 3 are volume, not F1 / F2 */
+        JT_CHECK("MustardOS F1 (0), F2 (1); volume (2, 3) left alone",
+                 joy_map[PAD_MUOS_BRICKPRO][0] == B_F1 && joy_map[PAD_MUOS_BRICKPRO][1] == B_F2 &&
+                     joy_map[PAD_MUOS_BRICKPRO][2] == B_NONE && joy_map[PAD_MUOS_BRICKPRO][3] == B_NONE);
     }
     printf("joytest: %s\n", ok ? "all good" : "FAILED");
     SDL_JoystickDetachVirtual(midx);
