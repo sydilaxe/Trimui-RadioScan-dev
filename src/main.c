@@ -84,6 +84,10 @@ static volatile float xf_pos[2], xf_step[2];
  * raw_peak: each stream's loudest sample since the screen last looked. */
 static volatile int raw_on;
 static volatile float raw_xf = 0.5f;
+static volatile float raw_hand; /* the Brick Pro's right stick across: -1..1 over the top of raw_xf, 0 lets go */
+
+/* x pulled toward one end of lo..hi by h (-1..1, all the way at the ends), as the right stick plays things by hand */
+static float toward(float x, float h, float lo, float hi) { return x + h * (h > 0 ? hi - x : x - lo); }
 static volatile float raw_peak[2];
 static const float raw_fade_s[] = {0, 0.5f, 1, 2, 4, 8, 16}; /* how long L1 / R1 / A take to fade all the way across */
 #define RAW_FADES ((int)(sizeof raw_fade_s / sizeof raw_fade_s[0]))
@@ -182,7 +186,7 @@ static float raw_w; /* audio thread: 0 the engine .. 1 RAW */
 static int raw_mix(int n)
 {
     static float x = -1;
-    float w = raw_w, target = raw_xf, want = raw_on ? 1.0f : 0.0f, pk[2] = {raw_peak[0], raw_peak[1]};
+    float w = raw_w, target = toward(raw_xf, raw_hand, 0, 1), want = raw_on ? 1.0f : 0.0f, pk[2] = {raw_peak[0], raw_peak[1]};
     float k = 1.0f - expf(-1.0f / (0.005f * audio_rate)), step = 1.0f / (0.01f * audio_rate);
     if (x < 0) x = target;
     int pure = w >= 1 && want >= 1;
@@ -1525,7 +1529,8 @@ static float stage_amount(int i)
     switch (i) {
     case 0: return synth_cross_amount(syn);
     case 1: { /* filter and bass / treble */
-        float f = fabsf(p[P_TONE]) > 0.02f ? fabsf(p[P_TONE]) + p[P_RESO] * 0.2f : 0;
+        float tone = synth_played_param(syn, P_TONE); /* with the LFOs and the right stick */
+        float f = fabsf(tone) > 0.02f ? fabsf(tone) + p[P_RESO] * 0.2f : 0;
         float eq = (fabsf(p[P_LOW]) + fabsf(p[P_HIGH])) / 24.0f;
         return fminf(1.0f, f > eq ? f : eq);
     }
@@ -1583,7 +1588,7 @@ static void draw_centre(int cx, int cy)
     text_halo(cx, cy + 12, t, on ? C_DIM : C_PANEL2);
     if (on) { seq_rate_label(SEQ_X, t, sizeof t); text_halo(cx, cy + 30, t, C_DIM); }
 
-    float m = p[P_MORPH];
+    float m = synth_played_param(syn, P_MORPH); /* with the LFOs and the right stick */
     int ar = CENTRE_R + 20;
     arc(cx, cy, ar, 2, 0.75f, 1.25f, C_PANEL2);
     int mx, my;
@@ -1672,7 +1677,7 @@ static void draw_raw(void)
     text(16, 8, "radioscan", C_DIM, 0);
     text(126, 8, "RAW", C_TEXT, 0);
     text_right(624, 8, "no engine, no effects", C_PANEL2, 0);
-    float x = raw_xf;
+    float x = toward(raw_xf, raw_hand, 0, 1);
     for (int o = 0; o < 2; o++) {
         int x0 = o ? 332 : 24, w = 284, cx = x0 + w / 2;
         float g = o ? x : 1 - x; /* this stream's share */
@@ -2663,6 +2668,17 @@ static void log_watch(Uint32 now)
  * station at a time. Let go, the voice glides home. It is radio scan played by hand, so nothing is saved. -1 .. 1,
  * set by on_axis. */
 static float sweep[2];
+/* The right stick plays the sound by hand and springs back when let go: across morphs toward A (left) or B (right),
+ * up and down opens or closes the filter. In RAW, across moves the crossfader the same way. */
+static float rstick[2];
+
+static void rstick_apply(void)
+{
+    int raw = raw_on;
+    synth_set_hand(syn, HAND_MORPH, raw ? 0 : rstick[0]);
+    synth_set_hand(syn, HAND_FILTER, raw ? 0 : -rstick[1]); /* up is negative */
+    raw_hand = raw ? rstick[0] : 0;
+}
 
 /* how many stations from home the stick has a voice: off is the offset now, kept until the stick is well past the
  * next station's place so a stick resting on a boundary doesn't flip between two */
@@ -2769,6 +2785,7 @@ static void logic_update(Uint32 now)
     log_watch(now);
     update_watch(now);
     radio_scan(now); /* in RAW only the left stick's sweep */
+    rstick_apply();
     raw_update(now);
     audio_watch(now);
     for (int o = 0; o < 2; o++)
@@ -2918,10 +2935,12 @@ static void on_axis(int axis, int v, Uint32 now)
             trig[t] = down;
             button(t ? B_R2 : B_L2, down, now);
         }
-    } else if (axis == 0 || axis == 1) { /* the left stick sweeps the stations: across voice A, up and down voice B */
+    } else if (axis == 0 || axis == 1 || axis == 3 || axis == 4) {
+        /* the left stick sweeps the stations (across voice A, up and down voice B); the right one plays the sound */
         float x = v / 32767.0f, a = fabsf(x);
         x = a < 0.2f ? 0.0f : (x > 0 ? 1.0f : -1.0f) * fminf((a - 0.2f) / 0.75f, 1.0f); /* centre dead zone removed */
-        sweep[axis] = x;
+        if (axis < 2) sweep[axis] = x;
+        else rstick[axis - 3] = x;
     }
 }
 
@@ -3313,6 +3332,25 @@ static int joy_test(void)
     JT_CHECK("sweep: half the list either way, a station at a time near the centre, held on a boundary",
              sweep_offset(1, 21, 0) == 10 && sweep_offset(-1, 21, 0) == -10 && sweep_offset(0.3f, 21, 0) == 1 &&
              sweep_offset(1, 3, 0) == 1 && sweep_offset(0.51f, 21, 2) == 2 && sweep_offset(0.6f, 21, 2) == 4);
+    { /* the right stick plays morph and the filter by hand and springs back, the settings untouched */
+        static float in0[512 * 2], out0[512 * 2];
+        synth_set_param(syn, P_MORPH, 0.25f);
+        synth_set_param(syn, P_TONE, 0);
+        jt_axis(3, 32767), jt_axis(4, -32767);
+        rstick_apply();
+        audio_lock();
+        for (int i = 0; i < 40; i++) synth_process(syn, in0, in0, out0, 512);
+        float m1 = synth_played_param(syn, P_MORPH), t1 = synth_played_param(syn, P_TONE);
+        jt_axis(3, 0), jt_axis(4, 0);
+        rstick_apply();
+        for (int i = 0; i < 40; i++) synth_process(syn, in0, in0, out0, 512);
+        float m0 = synth_played_param(syn, P_MORPH), t0 = synth_played_param(syn, P_TONE);
+        audio_unlock();
+        JT_CHECK("right stick (3, 4) morphs to B and opens the filter, then springs back",
+                 m1 > 0.99f && t1 > 0.99f && fabsf(m0 - 0.25f) < 1e-3f && fabsf(t0) < 1e-3f &&
+                     synth_get_param(syn, P_MORPH) == 0.25f && synth_get_param(syn, P_TONE) == 0);
+        synth_set_param(syn, P_MORPH, 0);
+    }
     ui.screen = SCR_PLAY;
     int taps = ui.ntaps;
     jt_button(9, 1), jt_button(9, 0);

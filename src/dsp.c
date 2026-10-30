@@ -407,6 +407,8 @@ struct Synth {
     float lfo_val[2][2], lfo_from[2][2], lfo_to[2][2];
     int lfo_moded[P_COUNT];    /* ids the LFOs changed last block, to put back */
     int n_moded;
+    volatile float hand_set[HAND_COUNT]; /* played by hand (the app's right stick): -1..1, 0 lets go */
+    float hand[HAND_COUNT];              /* the same, glided so a flick doesn't click */
     unsigned lfo_rng;
     float flash_fall;          /* per-block decay of the rhythm flashes */
     float gate_k;              /* gate smoothing per sample: ~2 ms, so no gate change clicks */
@@ -1387,7 +1389,28 @@ static void lfo_apply(Synth *s, int n)
             case LFO_SPACE: mod_set(s, P_SPACE, s->p[P_SPACE] + uni); break;
             }
         }
+    /* by hand, over the top of the setting and the LFOs: h pulls the value toward one end of its range (all the
+     * way at +-1), and letting go glides it back to where it was. Nothing the player set is changed. */
+    static const int hand_id[HAND_COUNT] = {P_MORPH, P_TONE};
+    float hk = 1.0f - expf(-n / (0.012f * s->fs));
+    for (int h = 0; h < HAND_COUNT; h++) {
+        float want = s->hand_set[h];
+        s->hand[h] += (want - s->hand[h]) * hk;
+        if (fabsf(want - s->hand[h]) < 1e-4f) s->hand[h] = want;
+        float v = s->hand[h];
+        if (v == 0) continue;
+        const ParamInfo *pi = &param_info[hand_id[h]];
+        float x = s->p[hand_id[h]];
+        mod_set(s, hand_id[h], x + v * (v > 0 ? pi->max - x : x - pi->min));
+    }
 }
+
+void synth_set_hand(Synth *s, int which, float v)
+{
+    if (which >= 0 && which < HAND_COUNT) s->hand_set[which] = v < -1 ? -1 : v > 1 ? 1 : v;
+}
+
+float synth_played_param(const Synth *s, int id) { return s->p[id]; }
 
 /* ------------------------------------------------------------------ output stage */
 

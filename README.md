@@ -279,8 +279,13 @@ works on every screen including RAW, and nothing it does is saved.
 | L3 (left stick click) | tap tempo, as SELECT | tap tempo |
 | R3 (right stick click) | grab a fresh slice, as a tap of L2 on PLAY (X on EDIT) | fade across, as A |
 
-The right stick isn't used yet. The same zip works on every Brick: the plain Brick and the Brick Hammer have no
-stick, and nothing changes for them.
+The right stick plays the sound by hand and springs back when you let go: **left / right morphs toward voice A /
+voice B, up / down opens / closes the filter**. Pushed all the way it takes morph or the filter to the end of its
+range, from wherever the setting and any LFO have it; let go and it glides back. Your settings don't change and
+nothing it does is saved. The centre of PLAY shows the morph as it plays. In RAW, left / right moves the crossfader
+the same way, springing back to where you left the fader.
+
+The same zip works on every Brick: the plain Brick and the Brick Hammer have no stick, and nothing changes for them.
 
 ## Wi-Fi sync
 
@@ -355,7 +360,8 @@ It opens a 1024x768 window, as on the Brick. Keyboard on desktop, the Miyoo's ke
 
 On the TrimUI the buttons arrive as a joystick: B 0, A 1, Y 2, X 3, L1 4, R1 5, SELECT 6, START 7, MENU 8, the
 d-pad as hat 0, and L2 and R2 as axes 2 and 5 (TrimUI OS, NextUI and MinUI agree). The Brick Pro's left stick
-(axes 0 and 1) sweeps the stations, and its clicks are L3 9 and R3 10. If a firmware numbers them differently, `RS_JOYMAP=A=1,B=0,...` in
+(axes 0 and 1) sweeps the stations, the right one (axes 3 and 4) plays morph and the filter, and the stick clicks
+are L3 9 and R3 10. If a firmware numbers them differently, `RS_JOYMAP=A=1,B=0,...` in
 `launch.sh` remaps them; a button RadioScan doesn't know is noted in `log.txt` when pressed.
 
 ### Releasing
