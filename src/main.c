@@ -46,8 +46,8 @@
 /* ================================================================== buttons */
 /* The TrimUI's buttons come in as a joystick (see the input section near main); a keyboard works too, for trying it
  * on a computer, with the Miyoo's key layout. */
-enum { B_UP, B_DOWN, B_LEFT, B_RIGHT, B_A, B_B, B_X, B_Y, B_L1, B_R1, B_L2, B_R2, B_SELECT, B_START, B_MENU,
-       B_L3, B_R3, B_COUNT, B_NONE = -1 };
+enum { B_UP, B_DOWN, B_LEFT, B_RIGHT, B_A, B_B, B_X, B_Y, B_L1, B_R1, B_L2, B_R2, B_SELECT, B_START, B_MENU, B_F1, B_F2, B_COUNT,
+       B_NONE = -1 };
 
 static int map_key(SDL_Keycode k)
 {
@@ -67,6 +67,8 @@ static int map_key(SDL_Keycode k)
     case SDLK_RCTRL: return B_SELECT;
     case SDLK_RETURN: return B_START;
     case SDLK_ESCAPE: return B_MENU;
+    case SDLK_F1: return B_F1;
+    case SDLK_F2: return B_F2;
     default: return B_NONE;
     }
 }
@@ -2189,6 +2191,16 @@ static void cell_fix(int q)
     if (synth_get_param(syn, SEQ_PARAM(q, 3)) >= st) synth_set_param(syn, SEQ_PARAM(q, 3), (float)(st - 1));
 }
 
+/* a new random Euclidean pattern (steps, pulses, rotation) for one rhythm; whether it's on stays as it is */
+static void seq_shuffle(int q)
+{
+    static const int lens[] = {5, 6, 7, 8, 9, 10, 11, 12, 13, 16, 16, 16};
+    int n = lens[rand() % 12], kmax = q >= SEQ_SA ? (n / 3 > 1 ? n / 3 : 1) : (n * 2 / 3 > 1 ? n * 2 / 3 : 1);
+    synth_set_param(syn, SEQ_PARAM(q, 1), (float)n);
+    synth_set_param(syn, SEQ_PARAM(q, 2), (float)(1 + rand() % kmax));
+    synth_set_param(syn, SEQ_PARAM(q, 3), (float)(rand() % n));
+}
+
 static void cell_button(int b)
 {
     static const int order[SEQ_COUNT] = {SEQ_A, SEQ_SA, SEQ_X, SEQ_SX, SEQ_SB, SEQ_B}; /* left to right on screen */
@@ -2246,15 +2258,7 @@ static void cell_button(int b)
             break;
         }
         case B_X: synth_set_param(syn, rot, (float)(((int)synth_get_param(syn, rot) + 1) % st)); break;
-        case B_Y: { /* a new random Euclidean pattern */
-            static const int lens[] = {5, 6, 7, 8, 9, 10, 11, 12, 13, 16, 16, 16};
-            int n = lens[rand() % 12], kmax = q >= SEQ_SA ? (n / 3 > 1 ? n / 3 : 1) : (n * 2 / 3 > 1 ? n * 2 / 3 : 1);
-            synth_set_param(syn, steps, (float)n);
-            synth_set_param(syn, pulses, (float)(1 + rand() % kmax));
-            synth_set_param(syn, rot, (float)(rand() % n));
-            synth_set_param(syn, on, 1);
-            break;
-        }
+        case B_Y: seq_shuffle(q); synth_set_param(syn, on, 1); break; /* a new random Euclidean pattern */
         default: return;
         }
     }
@@ -2320,7 +2324,7 @@ static void edit_nav(int b)
 }
 
 static const char *const button_names[B_COUNT] = {"UP", "DOWN", "LEFT", "RIGHT", "A", "B", "X", "Y", "L1", "R1",
-                                                   "L2", "R2", "SELECT", "START", "MENU", "L3", "R3"};
+                                                   "L2", "R2", "SELECT", "START", "MENU", "F1", "F2"};
 
 /* where a press lands, for the event log: the screen, page and selection */
 static void log_press(int b)
@@ -2352,18 +2356,21 @@ static void on_press(int b)
         return;
     }
     if (b == B_SELECT && ui.held[B_MENU]) { raw_toggle(); return; } /* MENU + SELECT, from anywhere: RAW in / out */
-    if (b == B_L3 || b == B_R3) { /* the Brick Pro's stick clicks: L3 taps the tempo, R3 grabs (in RAW: fades across) */
-        if (ui.overlay != OV_NONE) return;
-        if (b == B_L3) tap_tempo();
-        else if (ui.screen == SCR_RAW) raw_button(B_A);
-        else do_grab(ui.screen == SCR_PLAY ? play_voice() : edit_voice());
-        return;
-    }
     Uint32 now = SDL_GetTicks();
     if (ui.overlay == OV_KEYBOARD) { kb_input(b); return; }
     if (ui.overlay == OV_SCANMENU) { scan_menu_input(b); return; }
     if (ui.overlay == OV_SCANRESULTS) { scan_results_input(b); return; }
     if (ui.overlay == OV_UPDATE) { update_input(b); return; }
+
+    /* F1 and F2, from any screen: new Euclidean patterns for every rhythm (each stays on or off as it was), and the
+     * dice on every voice and engine setting (as R2 + R1) */
+    if (b == B_F1) {
+        for (int q = 0; q < SEQ_COUNT; q++) seq_shuffle(q);
+        toast("new patterns");
+        ui.dirty_settings = 1;
+        return;
+    }
+    if (b == B_F2) { synth_dice(syn, DICE_SOUND); toast("new sound"); ui.dirty_settings = 1; return; }
 
     if (b == B_MENU) {
         if (ui.menu_armed && now - ui.menu_armed < 1500) { ui.running = 0; return; }
@@ -2871,21 +2878,19 @@ static int video_init(void)
  *     axes 0, 1. One build serves both devices, so which one it is comes from the controller (product 2: Brick,
  *     3: Brick Pro), else from the board MustardOS names.
  * The Brick Pro's left stick sweeps the stations (see radio_scan), its right stick plays morph and the filter (see
- * rstick_apply), and its clicks are L3 and R3. RS_JOYMAP=A=1,B=0,... sets another firmware's button numbers
+ * rstick_apply), and its clicks are the buttons after MENU, read as F1 and F2. RS_JOYMAP=A=1,B=0,... sets another firmware's button numbers
  * (for every controller); a button that isn't mapped is noted in log.txt when pressed. As in Columbia Street, HI5
  * and Jaffedrone. */
 enum { PAD_TRIMUI, PAD_MUOS_BRICK, PAD_MUOS_BRICKPRO, PAD_KINDS };
 static const char *const pad_names[PAD_KINDS] = {"TrimUI OS", "MustardOS (Brick)", "MustardOS (Brick Pro)"};
-/* each pad's button numbers, in the order of the B_ enum (which ends with L3 and R3) */
-#define JB_COUNT B_COUNT
-static const signed char pad_buttons[PAD_KINDS][JB_COUNT] = {
-    /*                     UP  DN  LT  RT  A  B  X  Y  L1  R1  L2  R2  SEL STA MENU L3  R3 */
+/* each pad's button numbers, in the order of the B_ enum. F1 and F2 are the two buttons SDL numbers after MENU (L3 and
+ * R3 in other firmwares' maps; the Brick has no sticks to click). */
+static const signed char pad_buttons[PAD_KINDS][B_COUNT] = {
+    /*                     UP  DN  LT  RT  A  B  X  Y  L1  R1  L2  R2  SEL STA MENU F1  F2 */
     [PAD_TRIMUI]        = {-1, -1, -1, -1, 1, 0, 3, 2, 4,  5,  -1, -1, 6,  7,  8,   9,  10},
     [PAD_MUOS_BRICK]    = {-1, -1, -1, -1, 5, 4, 6, 7, 8,  9,  10, 11, 12, 13, 14,  15, 16},
     [PAD_MUOS_BRICKPRO] = {-1, -1, -1, -1, 6, 5, 7, 8, 9,  10, 11, 12, 13, 14, 15,  16, 17},
 };
-static const char *const jb_names[JB_COUNT] = {"UP", "DOWN", "LEFT", "RIGHT", "A", "B", "X", "Y", "L1",
-                                               "R1", "L2", "R2", "SELECT", "START", "MENU", "L3", "R3"};
 /* what each pad's axes do */
 enum { AX_NONE, AX_L2, AX_R2, AX_LX, AX_LY, AX_RX, AX_RY };
 #define PAD_AXES 6
@@ -2894,14 +2899,14 @@ static const unsigned char pad_axes[PAD_KINDS][PAD_AXES] = {
     [PAD_MUOS_BRICK] = {AX_NONE},
     [PAD_MUOS_BRICKPRO] = {AX_LX, AX_LY, AX_RX, AX_RY},
 };
-/* joy_map[pad][SDL button]: a B_ or B_NONE */
+/* joy_map[pad][SDL button]: a B_, or B_NONE */
 static int joy_map[PAD_KINDS][32];
 
 static void joy_map_init(void)
 {
     for (int p = 0; p < PAD_KINDS; p++) {
         for (int i = 0; i < 32; i++) joy_map[p][i] = B_NONE;
-        for (int b = 0; b < JB_COUNT; b++)
+        for (int b = 0; b < B_COUNT; b++)
             if (pad_buttons[p][b] >= 0) joy_map[p][(int)pad_buttons[p][b]] = b;
     }
     const char *m = getenv("RS_JOYMAP");
@@ -2909,8 +2914,8 @@ static void joy_map_init(void)
         char key[16];
         int num;
         if (sscanf(m, "%15[^=]=%d", key, &num) == 2 && num >= 0 && num < 32)
-            for (int b = 0; b < JB_COUNT; b++)
-                if (!strcasecmp(key, jb_names[b]))
+            for (int b = 0; b < B_COUNT; b++)
+                if (!strcasecmp(key, button_names[b]))
                     for (int p = 0; p < PAD_KINDS; p++) {
                         for (int i = 0; i < 32; i++)
                             if (joy_map[p][i] == b) joy_map[p][i] = B_NONE;
@@ -3059,7 +3064,7 @@ static void on_event(const SDL_Event *e, Uint32 now)
         /* every press, raw and as read: for checking a firmware's numbering */
         if (perf_level() == PERF_DETAIL)
             perf_log("INPUT", "controller %d button %d %s: %s", (int)e->jbutton.which, b, down ? "down" : "up",
-                     pad < 0 ? "ignored (MustardOS's controller is read instead)" : m != B_NONE ? jb_names[m] : "not used");
+                     pad < 0 ? "ignored (MustardOS's controller is read instead)" : m != B_NONE ? button_names[m] : "not used");
         if (pad < 0) break;
         if (m != B_NONE && m < B_COUNT) button(m, down, now);
         else if (m == B_NONE && down) ev("button %d (not used)", b); /* worth knowing on a new firmware */
@@ -3426,6 +3431,28 @@ static int joy_test(void)
         jt_button(face[i].n, 0);
         JT_CHECK(face[i].what, held && !ui.held[face[i].b]);
     }
+    { /* F1 (9): new patterns, each rhythm still on or off; F2 (10): the dice on the sound */
+        float before[SEQ_COUNT][4], after_on[SEQ_COUNT];
+        for (int q = 0; q < SEQ_COUNT; q++) {
+            synth_set_param(syn, SEQ_PARAM(q, 0), (float)(q & 1));
+            for (int f = 0; f < 4; f++) before[q][f] = synth_get_param(syn, SEQ_PARAM(q, f));
+        }
+        int changed = 0, kept = 1;
+        for (int t = 0; t < 4 && !changed; t++) { /* a roll can land on the same pattern; four in a row all can't */
+            jt_button(9, 1), jt_button(9, 0);
+            for (int q = 0; q < SEQ_COUNT; q++) {
+                after_on[q] = synth_get_param(syn, SEQ_PARAM(q, 0));
+                kept &= after_on[q] == before[q][0];
+                for (int f = 1; f < 4; f++) changed |= synth_get_param(syn, SEQ_PARAM(q, f)) != before[q][f];
+                kept &= synth_get_param(syn, SEQ_PARAM(q, 2)) <= synth_get_param(syn, SEQ_PARAM(q, 1));
+            }
+        }
+        JT_CHECK("F1 (9) new patterns, on/off kept", changed && kept);
+        float size_a = synth_get_param(syn, P_A_SIZE), size_b = synth_get_param(syn, P_B_SIZE);
+        jt_button(10, 1), jt_button(10, 0);
+        JT_CHECK("F2 (10) dice on the sound",
+                 synth_get_param(syn, P_A_SIZE) != size_a || synth_get_param(syn, P_B_SIZE) != size_b);
+    }
     jt_hat(SDL_HAT_RIGHT);
     int right = ui.held[B_RIGHT];
     jt_hat(SDL_HAT_RIGHTUP);
@@ -3471,13 +3498,6 @@ static int joy_test(void)
                      synth_get_param(syn, P_MORPH) == 0.25f && synth_get_param(syn, P_TONE) == 0);
         synth_set_param(syn, P_MORPH, 0);
     }
-    ui.screen = SCR_PLAY;
-    int taps = ui.ntaps;
-    jt_button(9, 1), jt_button(9, 0);
-    JT_CHECK("L3 (9) taps the tempo", ui.ntaps == taps + 1 || ui.ntaps == 1);
-    ui.grab_flash = 0;
-    jt_button(10, 1), jt_button(10, 0);
-    JT_CHECK("R3 (10) grabs", ui.grab_flash != 0);
     jt_button(8, 1), jt_button(8, 0);
     int running = ui.running;
     jt_button(8, 1), jt_button(8, 0);

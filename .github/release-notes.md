@@ -34,8 +34,8 @@ RadioScan checks for new releases when it starts and offers to update itself.
 - **USB audio:** a USB sound card or DAC takes over the output while it is plugged in.
 - **Brick Pro:** the left stick sweeps the stations by hand, like a tuning dial (left / right voice A, up / down
   voice B; let go and each glides home to its selected station). The right stick plays morph (left / right) and
-  the filter (up / down) by hand and springs back; in RAW it moves the crossfader. L3 taps the tempo, R3 grabs a
-  fresh slice.
+  the filter (up / down) by hand and springs back; in RAW it moves the crossfader. Clicking the sticks does F1
+  and F2.
 - Radio scan's crossfades now fade in from the new station's buffered audio, not from silence, and no longer stall
   after the first switch on a `.wav` station.
 - **Updates itself** from this repo's releases.

@@ -226,6 +226,8 @@ ring is outlined, and every change shows its pattern briefly, like `A  E(5,8) >2
 | hold R2 + X / B | fold more / less |
 | hold R2 + Y / A | space less / more |
 | R2 + L1 / R1 / SELECT | dice: new rhythms / new sound / hop both stations |
+| F1 | new Euclidean patterns on all six rings (each stays on or off as it was) |
+| F2 | dice on every voice and engine setting (as R2 + R1) |
 | L1 / R1 | pitch down / up an octave (LOOP, WAVE and GRAIN voices) |
 | SELECT | tap tempo |
 | START | go to EDIT |
@@ -241,6 +243,7 @@ ring is outlined, and every change shows its pattern briefly, like `A  E(5,8) >2
 | Up / Down | choose a row; Left / Right change it (hold B for fine steps) |
 | X / L2 | grab a fresh slice for the voice of the selected setting (both when it isn't a voice setting) |
 | Y | roll the dice on the selected section |
+| F1 / F2 | new Euclidean patterns / dice on the sound, as on PLAY |
 | SELECT | tap tempo |
 | START | back to PLAY |
 | hold MENU + START | clean slate (see below) |
@@ -289,7 +292,7 @@ tempo, Wi-Fi sync and every setting are just as you left them when you come back
 on. RAW, the fader and the fade time are saved, so RadioScan opens in RAW if you left it there. RAW is stereo even
 when the output is set to mono + clock.
 
-### Brick Pro: the stick and the clicks
+### Brick Pro: the sticks
 
 The left stick sweeps the stations by hand, like turning a tuning dial: **left / right for voice A, up / down for
 voice B** (right and down go further down the station list, as on the RADIO page). The further you push, the further
@@ -299,16 +302,14 @@ once it is playing (sweeping straight past doesn't connect to every station on t
 back to its own station. It is radio scan played by hand: it takes over from a voice's RADIO SCAN LFO while pushed,
 works on every screen including RAW, and nothing it does is saved.
 
-| Button | PLAY / EDIT | RAW |
-|---|---|---|
-| L3 (left stick click) | tap tempo, as SELECT | tap tempo |
-| R3 (right stick click) | grab a fresh slice, as a tap of L2 on PLAY (X on EDIT) | fade across, as A |
-
 The right stick plays the sound by hand and springs back when you let go: **left / right morphs toward voice A /
 voice B, up / down opens / closes the filter**. Pushed all the way it takes morph or the filter to the end of its
 range, from wherever the setting and any LFO have it; let go and it glides back. Your settings don't change and
 nothing it does is saved. The centre of PLAY shows the morph as it plays. In RAW, left / right moves the crossfader
 the same way, springing back to where you left the fader.
+
+Clicking the sticks does F1 (left) and F2 (right): the Brick Pro's controller numbers its clicks where the Brick's
+F1 and F2 are.
 
 The same zip works on every Brick: the plain Brick and the Brick Hammer have no stick, and nothing changes for them.
 
@@ -382,16 +383,19 @@ It opens a 1024x768 window, as on the Brick. Keyboard on desktop, the Miyoo's ke
 | E / T | L1 / R1 |
 | Tab / Backspace | L2 / R2 |
 | R-Ctrl / Enter / Esc | SELECT / START / MENU |
+| F1 / F2 | F1 / F2 |
 
 On the TrimUI the buttons arrive as a joystick: B 0, A 1, Y 2, X 3, L1 4, R1 5, SELECT 6, START 7, MENU 8, the
 d-pad as hat 0, and L2 and R2 as axes 2 and 5 (TrimUI OS, NextUI and MinUI agree). The Brick Pro's left stick
-(axes 0 and 1) sweeps the stations, the right one (axes 3 and 4) plays morph and the filter, and the stick clicks
-are L3 9 and R3 10. MustardOS gives its own "muOS-Keys" controller instead, numbered as in its `device/tui-brick*`
-maps (different on the Brick and the Brick Pro, with L2 and R2 as buttons); RadioScan reads it when it is there and
-ignores the TrimUI's controller underneath. If a firmware numbers them differently, `RS_JOYMAP=A=1,B=0,...` in
-`launch.sh` remaps them; a button RadioScan doesn't know is noted in `log.txt` when pressed. The same binary goes
-into both packages; it updates from the MustardOS package when its folder has `mux_launch.sh` (`mustardos/`), which
-only that package carries.
+(axes 0 and 1) sweeps the stations and the right one (axes 3 and 4) plays morph and the filter. MustardOS gives its
+own "muOS-Keys" controller instead, numbered as in its `device/tui-brick*` maps (different on the Brick and the Brick
+Pro, with L2 and R2 as buttons); RadioScan reads it when it is there and ignores the TrimUI's controller underneath.
+If a firmware numbers them differently, `RS_JOYMAP=A=1,B=0,...` in `launch.sh` remaps them; a button RadioScan
+doesn't know is noted in `log.txt` when pressed. F1 and F2 are taken to be the two buttons after MENU: 9 and 10 (15
+and 16 on MustardOS's Brick controller, 16 and 17 on its Brick Pro one), the numbers other firmwares call L3 and R3,
+so on the Brick Pro the stick clicks do F1 and F2; if they turn out different, the log names the button pressed and
+`RS_JOYMAP=F1=..,F2=..` moves them. The same binary goes into both packages; it updates from the MustardOS package
+when its folder has `mux_launch.sh` (`mustardos/`), which only that package carries.
 
 ### Releasing
 
