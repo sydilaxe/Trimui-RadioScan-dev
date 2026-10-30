@@ -18,6 +18,14 @@ curl -fsSL https://raw.githubusercontent.com/sydilaxe/Trimui-RadioScan-dev/main/
 
 RadioScan checks for new releases when it starts and offers to update itself.
 
+**Fix: the black screen on MustardOS, and F1 / F2 on the Brick Pro**
+- The picture is now sent to the screen opaque. Its pixels went out with their alpha (transparency) at 0, which
+  TrimUI OS ignores but MustardOS's display shows, so on MustardOS nothing the app drew was visible.
+- After MustardOS's screen wake the app makes its renderer again, and it rebuilds the picture whenever SDL reports
+  it lost or drawing fails. The log's `SCREEN` lines record each rebuild.
+- F1 and F2 (the two lit buttons under the screen) now work on a Brick Pro under MustardOS, which sends them as
+  buttons 2 and 3; the sticks' clicks still do the same.
+
 **New: MustardOS, and logs for tuning**
 - A package for MustardOS on the Brick, Brick Hammer and Brick Pro, installed from the Archive Manager. RadioScan
   reads MustardOS's controller, so every button (and the Brick Pro's stick) works as on TrimUI OS, and it updates
