@@ -44,7 +44,8 @@
 /* ================================================================== buttons */
 /* The TrimUI's buttons come in as a joystick (see the input section near main); a keyboard works too, for trying it
  * on a computer, with the Miyoo's key layout. */
-enum { B_UP, B_DOWN, B_LEFT, B_RIGHT, B_A, B_B, B_X, B_Y, B_L1, B_R1, B_L2, B_R2, B_SELECT, B_START, B_MENU, B_COUNT, B_NONE = -1 };
+enum { B_UP, B_DOWN, B_LEFT, B_RIGHT, B_A, B_B, B_X, B_Y, B_L1, B_R1, B_L2, B_R2, B_SELECT, B_START, B_MENU,
+       B_L3, B_R3, B_COUNT, B_NONE = -1 };
 
 static int map_key(SDL_Keycode k)
 {
@@ -2335,7 +2336,7 @@ static void edit_nav(int b)
 }
 
 static const char *const button_names[B_COUNT] = {"UP", "DOWN", "LEFT", "RIGHT", "A", "B", "X", "Y", "L1", "R1",
-                                                   "L2", "R2", "SELECT", "START", "MENU"};
+                                                   "L2", "R2", "SELECT", "START", "MENU", "L3", "R3"};
 
 /* where a press lands, for the event log: the screen, page and selection */
 static void log_press(int b)
@@ -2367,6 +2368,13 @@ static void on_press(int b)
         return;
     }
     if (b == B_SELECT && ui.held[B_MENU]) { raw_toggle(); return; } /* MENU + SELECT, from anywhere: RAW in / out */
+    if (b == B_L3 || b == B_R3) { /* the Brick Pro's stick clicks: L3 taps the tempo, R3 grabs (in RAW: fades across) */
+        if (ui.overlay != OV_NONE) return;
+        if (b == B_L3) tap_tempo();
+        else if (ui.screen == SCR_RAW) raw_button(B_A);
+        else do_grab(ui.screen == SCR_PLAY ? play_voice() : edit_voice());
+        return;
+    }
     Uint32 now = SDL_GetTicks();
     if (ui.overlay == OV_KEYBOARD) { kb_input(b); return; }
     if (ui.overlay == OV_SCANMENU) { scan_menu_input(b); return; }
@@ -2649,25 +2657,62 @@ static void log_watch(Uint32 now)
     aud_recent_gap_ms = 0;
 }
 
+/* The Brick Pro's left stick sweeps the stations by hand, like a tuning dial: across for voice A (right = further
+ * down the list), up and down for voice B (down = further down the list, as on the RADIO page). The further it is
+ * pushed, the further from the voice's own station, up to half the list either way; near the centre it moves a
+ * station at a time. Let go, the voice glides home. It is radio scan played by hand, so nothing is saved. -1 .. 1,
+ * set by on_axis. */
+static float sweep[2];
+
+/* how many stations from home the stick has a voice: off is the offset now, kept until the stick is well past the
+ * next station's place so a stick resting on a boundary doesn't flip between two */
+static int sweep_offset(float x, int n, int off)
+{
+    int span = (n - 1) / 2;
+    if (span < 1) span = 1;
+    float pos = x * fabsf(x) * span; /* fine near the centre, far at the edge */
+    return fabsf(pos - off) < 0.65f ? off : (int)lroundf(pos);
+}
+
 /* Radio scan: a voice's LFO set to RADIO SCAN picks stations from a window of the list around the voice's own
  * station (depth: from a station or two either side up to the whole list), and the voice crossfades into each one
- * once it is playing. With scan off it glides back home. One switch at a time; a station that fails is skipped. */
+ * once it is playing. With scan off it glides back home. One switch at a time; a station that fails is skipped.
+ * The left stick (sweep) wins over the LFO while it is pushed, and works in RAW too, where the LFO waits. */
 static void radio_scan(Uint32 now)
 {
-    static int target_of[2], bad[2] = {-1, -1};
-    static Uint32 started[2], bad_until[2], next_try[2];
+    static int target_of[2], bad[2] = {-1, -1}, hand_off[2], by_hand[2];
+    static Uint32 started[2], bad_until[2], next_try[2], hand_moved[2];
     int n = stations.count;
     for (int o = 0; o < 2; o++) {
+        /* Until its fade begins, nothing reads the next stream, and a stream only drops the old station's audio when
+         * it is read. Read nothing from it here, so the drop happens now: otherwise the old audio stays in its
+         * buffer (a full buffer stalls the next station), and the fade's first read throws away what it buffered. */
+        if (xf_state[o] < 2) {
+            float none[2];
+            stream_read(st_next[o], none, 0);
+        }
         float v = 0, depth = 0, rate = 0;
-        for (int k = 0; k < 2; k++)
+        for (int k = 0; k < 2 && !raw_on; k++)
             if ((int)synth_get_param(syn, LFO_PARAM(o, k, DEST)) == LFO_SCAN) {
                 float d = synth_get_param(syn, LFO_PARAM(o, k, DEPTH));
                 if (d > depth) { depth = d; v = synth_lfo_value(syn, o, k); rate = synth_lfo_hz(syn, o, k); }
             }
-        int base = station_param(o), scanning = depth > 0.01f;
+        int base = station_param(o), scanning = depth > 0.01f, hand = sweep[o] != 0.0f;
         if (base < 0 || base >= n || n < 2 || ui.pending_station[o] >= -1) continue;
+        int off = hand ? sweep_offset(sweep[o], n, hand_off[o]) : 0;
+        if (off != hand_off[o]) {
+            hand_off[o] = off;
+            hand_moved[o] = now;
+            if (hand) toast("voice %c: %s", 'A' + o, stations.items[((base + off) % n + n) % n].name);
+        }
+        if (hand) by_hand[o] = 1;
+        else if (by_hand[o] && ((xf_state[o] == 0 && ui.tuned[o] == base) || scanning))
+            by_hand[o] = 0; /* home again, or the LFO's scan takes over */
+        if (raw_on && !by_hand[o]) continue; /* in RAW only the stick moves a voice */
         int target = base;
-        if (scanning) {
+        if (hand)
+            target = ((base + off) % n + n) % n;
+        else if (scanning) {
             int span = (int)lroundf(depth * (n - 1) * 0.5f);
             if (span < 1) span = 1;
             target = ((base + (int)lroundf(v * span)) % n + n) % n;
@@ -2675,15 +2720,22 @@ static void radio_scan(Uint32 now)
         switch (xf_state[o]) {
         case 0:
             if (target == ui.tuned[o] || now < next_try[o] || (target == bad[o] && now < bad_until[o])) break;
+            if (hand && now - hand_moved[o] < 200) break; /* sweeping past: wait until the stick rests on one */
             stream_play(st_next[o], stations.items[target].url);
             target_of[o] = target;
             started[o] = now;
             xf_state[o] = 1;
-            ev("  voice %c %s %s", 'A' + o, scanning ? "scans to" : "returns to", stations.items[target].name);
+            ev("  voice %c %s %s", 'A' + o, hand ? "sweeps to" : scanning ? "scans to" : "returns to",
+               stations.items[target].name);
             break;
         case 1:
+            if (target != target_of[o] && by_hand[o]) { /* the stick has moved on, or let go: drop this one */
+                stream_stop(st_next[o]);
+                xf_state[o] = 0;
+                break;
+            }
             if (stream_state(st_next[o]) == ST_PLAYING && stream_buffer_seconds(st_next[o]) > 1.0f) {
-                float fade = scanning ? 0.6f / rate : 1.5f; /* slower scans, longer fades */
+                float fade = hand ? 0.4f : scanning ? 0.6f / rate : 1.5f; /* slower scans, longer fades */
                 fade = fade < 0.3f ? 0.3f : fade > 4.0f ? 4.0f : fade;
                 xf_pos[o] = 0;
                 xf_step[o] = 1.0f / (fade * audio_rate);
@@ -2716,7 +2768,7 @@ static void logic_update(Uint32 now)
 {
     log_watch(now);
     update_watch(now);
-    if (!raw_on) radio_scan(now);
+    radio_scan(now); /* in RAW only the left stick's sweep */
     raw_update(now);
     audio_watch(now);
     for (int o = 0; o < 2; o++)
@@ -2794,16 +2846,17 @@ static int video_init(void)
 
 /* ================================================================== input
  * The TrimUI's buttons, as SDL sees them on TrimUI OS (NextUI and MinUI agree): buttons B 0, A 1, Y 2, X 3, L1 4,
- * R1 5, SELECT 6, START 7, MENU 8; the d-pad is hat 0; L2 and R2 are axes 2 and 5. The Brick Pro's left stick works
- * as a second d-pad. RS_JOYMAP=A=1,B=0,... sets another firmware's button numbers; a button that isn't mapped is
- * noted in log.txt when pressed. */
+ * R1 5, SELECT 6, START 7, MENU 8, and the Brick Pro's stick clicks L3 9 and R3 10; the d-pad is hat 0; L2 and R2
+ * are axes 2 and 5; the Brick Pro's left stick is axes 0 and 1 (it sweeps the stations: see radio_scan).
+ * RS_JOYMAP=A=1,B=0,... sets another firmware's button numbers; a button that isn't mapped is noted in log.txt when
+ * pressed. */
 static int joy_map[32];
 
 static void joy_map_init(void)
 {
-    static const int def[] = {B_B, B_A, B_Y, B_X, B_L1, B_R1, B_SELECT, B_START, B_MENU};
+    static const int def[] = {B_B, B_A, B_Y, B_X, B_L1, B_R1, B_SELECT, B_START, B_MENU, B_L3, B_R3};
     static const char *const names[B_COUNT] = {"UP", "DOWN", "LEFT", "RIGHT", "A", "B", "X", "Y",
-                                               "L1", "R1", "L2", "R2", "SELECT", "START", "MENU"};
+                                               "L1", "R1", "L2", "R2", "SELECT", "START", "MENU", "L3", "R3"};
     for (int i = 0; i < 32; i++) joy_map[i] = i < (int)(sizeof def / sizeof def[0]) ? def[i] : B_NONE;
     const char *m = getenv("RS_JOYMAP");
     while (m && *m) {
@@ -2846,18 +2899,18 @@ static void button(int b, int down, Uint32 now)
     }
 }
 
-/* the d-pad hat and the left stick both drive the d-pad: a direction is down while either holds it */
-static int dpad_hat, dpad_stick;
+/* the d-pad is hat 0 */
+static int dpad_hat;
 static void dpad_update(Uint32 now)
 {
     static const int bit[4] = {SDL_HAT_UP, SDL_HAT_DOWN, SDL_HAT_LEFT, SDL_HAT_RIGHT};
     static const int btn[4] = {B_UP, B_DOWN, B_LEFT, B_RIGHT};
-    for (int i = 0; i < 4; i++) button(btn[i], ((dpad_hat | dpad_stick) & bit[i]) != 0, now);
+    for (int i = 0; i < 4; i++) button(btn[i], (dpad_hat & bit[i]) != 0, now);
 }
 
 static void on_axis(int axis, int v, Uint32 now)
 {
-    static int trig[2], stick[2];
+    static int trig[2];
     if (axis == 2 || axis == 5) { /* L2, R2: pressed past halfway, let go below a quarter */
         int t = axis == 5;
         int down = trig[t] ? v > 8192 : v > 16384;
@@ -2865,14 +2918,10 @@ static void on_axis(int axis, int v, Uint32 now)
             trig[t] = down;
             button(t ? B_R2 : B_L2, down, now);
         }
-    } else if (axis == 0 || axis == 1) { /* the left stick: a direction past 60%, let go below 40% */
-        int was = stick[axis];
-        int dir = was ? (v * was > 13107 ? was : 0) : (v > 19660 ? 1 : v < -19660 ? -1 : 0);
-        if (was && !dir && (v > 19660 || v < -19660)) dir = v > 0 ? 1 : -1; /* flicked straight across */
-        stick[axis] = dir;
-        dpad_stick = (stick[0] < 0 ? SDL_HAT_LEFT : stick[0] > 0 ? SDL_HAT_RIGHT : 0) |
-                     (stick[1] < 0 ? SDL_HAT_UP : stick[1] > 0 ? SDL_HAT_DOWN : 0);
-        dpad_update(now);
+    } else if (axis == 0 || axis == 1) { /* the left stick sweeps the stations: across voice A, up and down voice B */
+        float x = v / 32767.0f, a = fabsf(x);
+        x = a < 0.2f ? 0.0f : (x > 0 ? 1.0f : -1.0f) * fminf((a - 0.2f) / 0.75f, 1.0f); /* centre dead zone removed */
+        sweep[axis] = x;
     }
 }
 
@@ -3254,20 +3303,23 @@ static int joy_test(void)
     int r2 = ui.held[B_R2];
     jt_axis(5, 0);
     JT_CHECK("R2 (axis 5)", r2 && !ui.held[B_R2]);
-    jt_axis(1, -30000);
-    int up = ui.held[B_UP];
-    jt_axis(1, -15000); /* past 40%: still held */
-    up &= ui.held[B_UP];
-    jt_axis(1, 30000); /* flicked straight across */
-    int down = ui.held[B_DOWN] && !ui.held[B_UP];
+    jt_axis(0, 32767);
+    int sa = sweep[0] == 1.0f && !ui.held[B_RIGHT]; /* the stick sweeps; it is no longer a d-pad */
+    jt_axis(1, -32767);
+    int sb = sweep[1] == -1.0f && !ui.held[B_UP];
+    jt_axis(0, 4000); /* inside the dead zone */
     jt_axis(1, 0);
-    jt_axis(0, 30000);
-    int sright = ui.held[B_RIGHT];
-    jt_hat(SDL_HAT_RIGHT); /* the hat and the stick together, then the stick let go: the hat still holds it */
-    jt_axis(0, 0);
-    sright &= ui.held[B_RIGHT];
-    jt_hat(SDL_HAT_CENTERED);
-    JT_CHECK("left stick as d-pad", up && down && sright && !ui.held[B_RIGHT] && !ui.held[B_DOWN]);
+    JT_CHECK("left stick sweeps A across, B up / down", sa && sb && sweep[0] == 0.0f && sweep[1] == 0.0f);
+    JT_CHECK("sweep: half the list either way, a station at a time near the centre, held on a boundary",
+             sweep_offset(1, 21, 0) == 10 && sweep_offset(-1, 21, 0) == -10 && sweep_offset(0.3f, 21, 0) == 1 &&
+             sweep_offset(1, 3, 0) == 1 && sweep_offset(0.51f, 21, 2) == 2 && sweep_offset(0.6f, 21, 2) == 4);
+    ui.screen = SCR_PLAY;
+    int taps = ui.ntaps;
+    jt_button(9, 1), jt_button(9, 0);
+    JT_CHECK("L3 (9) taps the tempo", ui.ntaps == taps + 1 || ui.ntaps == 1);
+    ui.grab_flash = 0;
+    jt_button(10, 1), jt_button(10, 0);
+    JT_CHECK("R3 (10) grabs", ui.grab_flash != 0);
     jt_button(8, 1), jt_button(8, 0);
     int running = ui.running;
     jt_button(8, 1), jt_button(8, 0);
