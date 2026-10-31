@@ -29,7 +29,7 @@
 enum {
     VOICE_FIELDS(A), /* VOICE B id = VOICE A id + OSC_STRIDE */
     VOICE_FIELDS(B),
-    P_BPM, P_SYNC,
+    P_BPM, P_SYNC, P_FADE, /* P_FADE: how long start / stop fades the sound in / out */
     P_OUTPUT, P_CLK_SIDE, P_CLK_PPQN, P_CLK_PULSE, /* stereo, or mono sound + clock pulses for other gear */
     P_VOCODE, P_VOCODE_AMT, P_BANDS, P_FM, P_FM_DIR, P_RING, P_MORPH, P_CONVERSE,
     P_ROOT,
@@ -124,8 +124,11 @@ double synth_position(const Synth *s);                 /* 16th notes since the d
 void synth_set_position(Synth *s, double steps);
 void synth_set_clock_rate(Synth *s, double rate);      /* 0.9 .. 1.1 speed trim */
 double synth_steps_per_frame(const Synth *s);          /* how far the position moves each frame */
+/* start / stop: stopping fades the whole output out over P_FADE with the clock still running, then stops the clock;
+ * starting runs the clock and fades back in. synth_running is the transport as asked for. */
 void synth_set_running(Synth *s, int on);
 int synth_running(const Synth *s);
+float synth_fade_level(const Synth *s);                /* 0 silent (stopped) .. 1 playing */
 
 /* dice: randomise parameters within musical ranges (amount 1 = anything goes, small = gentle) */
 void synth_randomize(Synth *s, const int *ids, int n, float amount);

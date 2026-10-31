@@ -1114,7 +1114,7 @@ static void draw_beat(int x, int y)
         snprintf(b, sizeof b, "%.0f bpm", synth_get_param(syn, P_BPM));
     } else { /* stopped: a square, as on a transport */
         fill(x - 5, y + 3, 11, 11, C_RUST);
-        snprintf(b, sizeof b, "stopped");
+        snprintf(b, sizeof b, synth_fade_level(syn) > 0 ? "stopping" : "stopped"); /* fading out */
     }
     text(x + 14, y, b, synth_running(syn) ? C_DIM : C_RUST, 0);
     if (sc_mode() != SYNC_OFF) { /* Wi-Fi sync: ring = searching, filled = linked */
@@ -2083,7 +2083,8 @@ static void adjust_param(int id, int dir)
 
 /* ---- rhythm cells on the PLAY page, played like hi5's pattern grid ---- */
 
-/* start / stop the rhythms; starting begins again from the downbeat */
+/* start / stop: stopping fades the whole sound out over the Start/Stop Fade time (the rhythms run on until it is
+ * silent, then the clock stops); starting begins again from the downbeat and fades back in */
 static void transport_toggle(void)
 {
     if (sync_status()->following) { toast("the lead unit starts and stops the rhythms"); return; }
@@ -2092,7 +2093,10 @@ static void transport_toggle(void)
     if (run) synth_tap_reset(syn);
     synth_set_running(syn, run);
     audio_unlock();
-    toast(run ? "rhythms playing" : "rhythms stopped (voices with a rhythm are quiet)");
+    static const char *const secs[] = {"", "0.5 s", "1 s", "2 s", "4 s", "8 s", "16 s"};
+    int f = (int)synth_get_param(syn, P_FADE);
+    if (f <= 0 || f > 6) toast(run ? "playing" : "stopped");
+    else toast(run ? "playing - fading in over %s" : "stopping - fading out over %s", secs[f]);
 }
 
 /* mute or unmute a voice (it fades over a few ms) */

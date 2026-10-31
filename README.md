@@ -220,7 +220,7 @@ ring is outlined, and every change shows its pattern briefly, like `A  E(5,8) >2
 | hold L2 + left / right | rate: jump between 1/4, 1/8, 1/16 and 1/32 (right = faster; every rate is on the RHYTHM page) |
 | hold L2 + Y / X | gate length shorter / longer (a stutter: fewer / more ratchets) |
 | hold L2 + B | mute / unmute the selected voice (on a stutter ring: its mode) |
-| hold L2 + A | start / stop the rhythms (stopped, voices with a rhythm on are quiet; start begins on the downbeat) |
+| hold L2 + A | start / stop: stop fades all the sound out (the rhythms play on until it is silent, then stop); start begins on the downbeat and fades back in. The fade time is **Start/Stop Fade** on the RHYTHM page |
 | tap L2 | grab a fresh slice for the selected voice (both voices when the cross rhythm is selected) |
 | hold R2 + D-pad | up/down: filter brighter / darker; left/right: morph toward A / B |
 | hold R2 + X / B | fold more / less |
@@ -360,7 +360,7 @@ nudge their clock speed by up to 3% to stay in phase. They line up what is heard
 each packet carries the time it was sent, so Wi-Fi delays and slow screen frames don't count, and units echo each
 other's packets to time the trip. Older units of the sibling apps still sync, a few milliseconds less closely. Sync moves RadioScan's
 two rhythms and the echo time; the radio streams themselves just keep playing. If the leader stops its
-transport, followers hold their rhythms too.
+transport, followers stop too, each fading out over its own Start/Stop Fade time, and they fade back in when it starts.
 
 The badge next to the tempo shows the state: an empty ring while searching, then *lead* or *follow* once
 linked. Each unit sends 32 bytes ten times a second, so sync adds almost nothing on top of the two radio
@@ -381,7 +381,7 @@ it with a stereo-to-two-mono cable and plug the clock side into a Pocket Operato
 | Pulse Width | 1 to 20 ms (5 by default) |
 
 The pulses follow the same clock as the rhythms, so tap tempo, start / stop (L2 + A) and Wi-Fi sync carry
-through: stopped, there are no pulses. They leave with the sound, after the limiter's 1.5 ms look-ahead, so each
+through: stopped, there are no pulses (while a stop fades out the pulses carry on, then stop with the sound). They leave with the sound, after the limiter's 1.5 ms look-ahead, so each
 lands on its beat. In mono + clock every pan and stereo spread plays from the centre: each voice's Pan (and an
 LFO on it), the grains' spread and Stereo Width. The settings are kept and come back with STEREO; their rows say
 so. The clock side goes out without dither. Dice and the clean slate leave the output settings alone.
