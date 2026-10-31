@@ -30,6 +30,8 @@ static const char *const fm_dirs[] = {"B BENDS A", "A BENDS B", NULL};
 static const char *const band_names[] = {"5", "8", "13", "21", "34", NULL};
 static const int band_counts[] = {5, 8, 13, 21, 34};
 static const char *const sync_modes[] = {"OFF", "AUTO", "LEAD", "FOLLOW", NULL};
+static const char *const fades[] = {"CUT", "0.5 s", "1 s", "2 s", "4 s", "8 s", "16 s", NULL};
+static const float fade_s[] = {0.01f, 0.5f, 1, 2, 4, 8, 16}; /* CUT is 10 ms, so it doesn't click */
 static const char *const outputs[] = {"STEREO", "MONO + CLOCK", NULL};
 static const char *const clk_sides[] = {"RIGHT", "LEFT", NULL};
 static const char *const ppqns[] = {"1", "2  PO / VOLCA", "4", "8", "16", "24  DIN", "32", NULL};
@@ -100,6 +102,7 @@ const ParamInfo param_info[P_COUNT] = {
 
     [P_BPM]    = {"bpm", "Tempo (SELECT)", PAGE_RHYTHM, 20, 300, 80, 1, 0, "bpm", NULL},
     [P_SYNC]   = {"sync", "Wi-Fi Sync", PAGE_RHYTHM, 0, 3, 1, 1, 0, "", sync_modes},
+    [P_FADE]   = {"fade", "Start/Stop Fade", PAGE_RHYTHM, 0, 6, 3, 1, 0, "", fades},
     [P_OUTPUT]    = {"output", "Output", PAGE_RHYTHM, 0, 1, 0, 1, 0, "", outputs},
     [P_CLK_SIDE]  = {"clock_side", "Clock On", PAGE_RHYTHM, 0, 1, 0, 1, 0, "", clk_sides},
     [P_CLK_PPQN]  = {"clock_ppqn", "PPQN", PAGE_RHYTHM, 0, 6, 1, 1, 0, "", ppqns},
@@ -150,7 +153,7 @@ const char *param_section(int id)
     }
     if (id >= P_X_STUT_ON) return "STUTTER CROSS";
     if (id >= P_X_GATE_ON) return "RHYTHM CROSS";
-    if (id <= P_SYNC) return "CLOCK";
+    if (id <= P_FADE) return "CLOCK";
     if (id <= P_CLK_PULSE) return "CLOCK OUT";
     if (id <= P_CONVERSE) return "CROSS";
     if (id <= P_ROOT) return "KEY";
@@ -368,7 +371,9 @@ struct Synth {
     float pitch;
 
     double beat_pos, clock_rate;
-    int running;
+    int running;               /* the transport as asked for (start / stop) */
+    int clock_on;              /* the clock moves: on while running, and while a stop fades out */
+    float run_gain;            /* the start / stop fade on the whole output, 0 .. 1 */
 
     Svf filt[2], filt_hp[2];   /* the filter: a high-pass into a low-pass, per channel */
     /* cross-modulation filterbank (vocode and morph) */
@@ -499,7 +504,8 @@ Synth *synth_create(int sample_rate)
     s->last_note = 60;
     s->pitch = 60;
     s->clock_rate = 1.0;
-    s->running = 1;
+    s->running = s->clock_on = 1;
+    s->run_gain = 1.0f;
     s->lev_gain = 1.0f;
     s->lev_env = 0.04f;
     s->s_vol = 1.0f;
@@ -640,9 +646,14 @@ float synth_beat_phase(const Synth *s) { return (float)(s->beat_pos - floor(s->b
 double synth_position(const Synth *s) { return s->beat_pos * 4.0; }
 void synth_set_position(Synth *s, double steps) { s->beat_pos = steps < 0 ? 0 : steps / 4.0; }
 void synth_set_clock_rate(Synth *s, double r) { s->clock_rate = r < 0.9 ? 0.9 : r > 1.1 ? 1.1 : r; }
-void synth_set_running(Synth *s, int on) { s->running = on; }
+void synth_set_running(Synth *s, int on)
+{
+    s->running = on;
+    if (on) s->clock_on = 1; /* a stop's fade-out ends the clock itself (synth_process) */
+}
 int synth_running(const Synth *s) { return s->running; }
-double synth_steps_per_frame(const Synth *s) { return s->running ? s->p[P_BPM] / 15.0 / s->fs * s->clock_rate : 0.0; }
+float synth_fade_level(const Synth *s) { return s->run_gain; }
+double synth_steps_per_frame(const Synth *s) { return s->clock_on ? s->p[P_BPM] / 15.0 / s->fs * s->clock_rate : 0.0; }
 
 /* ------------------------------------------------------------------ dice */
 
@@ -700,7 +711,7 @@ static int dice_excluded(int id)
 {
     int o = osc_of(id);
     int f = o >= 0 ? osc_field(id) : id;
-    return f == P_A_STATION || f == P_A_FOCUS || f == P_A_DRIVE || f == P_A_MUTE || id == P_VOLUME || id == P_BPM || id == P_SYNC || id == P_ROOT ||
+    return f == P_A_STATION || f == P_A_FOCUS || f == P_A_DRIVE || f == P_A_MUTE || id == P_VOLUME || id == P_BPM || id == P_SYNC || id == P_FADE || id == P_ROOT ||
            (id >= P_OUTPUT && id <= P_CLK_PULSE) ||
            (id >= P_CROSS_LEVEL && id <= P_AUTO_LEVEL); /* the effect returns stay where the player set them */
 }
@@ -1055,7 +1066,7 @@ static void stut_step(Synth *s, Stut *st, int v, long step_abs, float step_s)
     int steps = (int)p[RHYTHM_P(v, STUT_STEPS)];
     st->idx = (int)(step_abs % steps);
     st->n = 0;
-    if (!(int)p[RHYTHM_P(v, STUT_ON)] || !s->running) return;
+    if (!(int)p[RHYTHM_P(v, STUT_ON)] || !s->clock_on) return;
     if (!euclid_hit(steps, (int)p[RHYTHM_P(v, STUT_PULSES)], (int)p[RHYTHM_P(v, STUT_ROT)], st->idx)) return;
     if (rnd01(s) >= p[RHYTHM_P(v, STUT_CHANCE)]) return;
     int n = (int)p[RHYTHM_P(v, STUT_RATCHET)], mode = (int)p[RHYTHM_P(v, STUT_MODE)];
@@ -1111,7 +1122,7 @@ static float euclid_gate(Synth *s, int v, double beat, int *new_hit)
         if (was) r->st.tail = (int)(STUT_FADE_S * s->fs); /* the last ratchet faded out: fade the sound back in */
     }
     if (!on) return 1.0f;
-    if (!s->running || !r->hit) return 0.0f; /* stopped: a rhythm that is on stays closed */
+    if (!s->clock_on || !r->hit) return 0.0f; /* stopped: a rhythm that is on stays closed */
     float t = (float)(sp - step), len = p[RHYTHM_P(v, LENGTH)];
     float min_att = 0.004f / step_s; /* never faster than 4 ms */
     /* close at least 8 ms before the step ends, so the next pulse (and a LOOP's restart) starts from silence */
@@ -1166,7 +1177,7 @@ static inline void stutter_tick(Synth *s, Stut *st, float *x)
     st->w++;
     float fade = STUT_FADE_S * s->fs, back = 1.0f; /* 2 ms edges on every ratchet, and coming back after */
     if (st->tail > 0) back = 1.0f - st->tail-- / fade;
-    if (st->n && (!s->running || st->t >= st->seg * st->n)) { /* stopped, or the step ran long (tempo change) */
+    if (st->n && (!s->clock_on || st->t >= st->seg * st->n)) { /* stopped, or the step ran long (tempo change) */
         st->n = 0;
         st->tail = (int)fade;
         back = 0;
@@ -1460,7 +1471,7 @@ void synth_process(Synth *s, const float *inA, const float *inB, float *out, int
 {
     const float fs = s->fs;
     const float *in[2] = {inA, inB};
-    const double beat_inc = s->running ? s->p[P_BPM] / 60.0 / fs * s->clock_rate : 0.0;
+    const double beat_inc = s->clock_on ? s->p[P_BPM] / 60.0 / fs * s->clock_rate : 0.0;
 
     for (int b0 = 0; b0 < frames; b0 += BLOCK) {
         int n = frames - b0 < BLOCK ? frames - b0 : BLOCK;
@@ -1529,6 +1540,8 @@ void synth_process(Synth *s, const float *inA, const float *inB, float *out, int
         const int clk_ppqn = clk_ppqn_value((int)s->p[P_CLK_PPQN]);
         const double clk_spp = fs * 60.0 / (s->p[P_BPM] * clk_ppqn * s->clock_rate); /* samples per pulse */
         const double clk_w = fmin(s->p[P_CLK_PULSE] * 0.001 * fs, clk_spp * 0.5);
+        int fi = (int)s->p[P_FADE];
+        const float run_step = 1.0f / (fade_s[fi < 0 ? 0 : fi > 6 ? 6 : fi] * fs);
         const float k_lo = 1.0f - expf(-2.0f * (float)M_PI * 250.0f / fs), k_hi = 1.0f - expf(-2.0f * (float)M_PI * 3000.0f / fs);
         float echo = s->p[P_ECHO], space = s->p[P_SPACE];
         float dtarget = 0.75f * 60.0f / s->p[P_BPM] * fs; /* dotted eighth */
@@ -1788,12 +1801,19 @@ void synth_process(Synth *s, const float *inA, const float *inB, float *out, int
                 out[i * 2] *= s->clean_gain;
                 out[i * 2 + 1] *= s->clean_gain;
             }
+            if (s->run_gain < 1 || !s->running) { /* start / stop: the whole output fades in / out */
+                if (s->running) s->run_gain = fminf(1.0f, s->run_gain + run_step);
+                else if ((s->run_gain -= run_step) <= 0) s->run_gain = 0, s->clock_on = 0; /* faded out: stop */
+                float g = s->run_gain * s->run_gain; /* eased: an even fade to the ear, no tail at the end */
+                out[i * 2] *= g;
+                out[i * 2 + 1] *= g;
+            }
             meter_peak(&mt[MIX_OUT], out[i * 2], out[i * 2 + 1], fall);
             s->tap[TAP_OUT][tw] = 0.5f * (out[i * 2] + out[i * 2 + 1]);
             if (clk_out) {
                 float mono = 0.5f * (out[i * 2] + out[i * 2 + 1]);
                 double ph = fmod(beat * clk_ppqn - s->lim_la / clk_spp, 1.0);
-                float c = s->running && (ph < 0 ? ph + 1.0 : ph) * clk_spp < clk_w ? 0.95f : 0.0f;
+                float c = s->clock_on && (ph < 0 ? ph + 1.0 : ph) * clk_spp < clk_w ? 0.95f : 0.0f;
                 out[i * 2] = clk_left ? c : mono;
                 out[i * 2 + 1] = clk_left ? mono : c;
             }
