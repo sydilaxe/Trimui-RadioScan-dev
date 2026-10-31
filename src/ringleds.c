@@ -161,6 +161,13 @@ static uint32_t glow(uint32_t c, float t)
     return r << 16 | g << 8 | b;
 }
 
+uint32_t ringleds_glow(uint32_t c, float t) { return glow(c, t); }
+/* L1, L2, R2, R1: the frame's order */
+static uint32_t shoulder[4] = {RINGLEDS_BEAT, RINGLEDS_BEAT, RINGLEDS_BEAT, RINGLEDS_BEAT};
+void ringleds_shoulders(uint32_t l1, uint32_t l2, uint32_t r1, uint32_t r2)
+{
+    shoulder[0] = l1, shoulder[1] = l2, shoulder[2] = r2, shoulder[3] = r1;
+}
 static uint64_t ms_now(void)
 {
     struct timespec ts;
@@ -204,7 +211,7 @@ void ringleds_update(float lx, float ly, uint32_t lcol, float rx, float ry, uint
     float t = playing && beat_at ? (float)(now - beat_at) / beat_ms : 1.f;
     uint32_t beat = t < 1.f ? glow(first ? COL_BAR : COL_BEAT, (1.f - t) * (1.f - t)) : 0;
     for (int k = 0; k < 4; k++)
-        f[F_SHOULDER + k] = beat;
+        f[F_SHOULDER + k] = shoulder[k] == RINGLEDS_BEAT ? beat : shoulder[k];
     if (shown_any && !memcmp(f, shown, sizeof f))
         return;
     char v[NFRAME * 7 + 2];

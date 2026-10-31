@@ -90,6 +90,7 @@ static volatile float xf_pos[2], xf_step[2];
  * everything as it was carry on for when RAW is left. raw_xf: 0 all A .. 1 all B, set by the main thread;
  * raw_peak: each stream's loudest sample since the screen last looked. */
 static volatile int raw_on;
+static Uint32 leds_pressed[2]; /* when F1 / F2 were last pressed (their lights flash white) */
 static volatile float raw_xf = 0.5f;
 static volatile float raw_hand; /* the Brick Pro's right stick across: -1..1 over the top of raw_xf, 0 lets go */
 
@@ -120,6 +121,7 @@ static struct {
     int held[B_COUNT];
     Uint32 held_since[B_COUNT], last_repeat[B_COUNT];
     int l2_used;              /* L2 acted as a modifier while held (otherwise a tap = grab) */
+    int start_used;           /* START acted as a modifier while held (otherwise a tap = start / stop) */
     int cell;                 /* PLAY: selected rhythm, SEQ_A, SEQ_B or SEQ_X (the cross rhythm in the middle) */
     char toast[128];
     Uint32 toast_until;
@@ -1643,11 +1645,11 @@ static void draw_play(void)
 
     int stut = ui.cell >= SEQ_SA;
     const char *hint = ui.held[B_R2] ? "dpad: filter / morph   X B: fold   Y A: space" :
-                       ui.held[B_L2] ? (stut ? "^v steps  <> rate  Y X ratchets  B mode  A start/stop" :
-                                               "^v steps  <> rate  Y X length  B mute  A start/stop") :
+                       ui.held[B_L2] ? (stut ? "^v steps  <> rate  Y X ratchets  B mode" :
+                                               "^v steps  <> rate  Y X length  B mute") :
                                        "<> rhythm  ^v pulses  A on/off  B fewer  X rotate  Y new";
     text_center(320, 344, hint, C_DIM, 0);
-    text(16, 455, "L1/R1 pitch  L2 grab  SELECT tap  START edit  MENU x2 quit", C_PANEL2, 0);
+    text(16, 455, "L1/R1 pitch  START play/stop  START+R1 edit  SELECT tap", C_PANEL2, 0);
 }
 
 /* ================================================================== RAW screen */
@@ -1716,7 +1718,7 @@ static void draw_raw(void)
 
     text_center(320, 352, "<> fader (B held: slow)   L1/R1 fade to A/B   A across", C_DIM, 0);
     text_center(320, 374, "Y centre   ^v fade time   L2/R2 + ^v station A/B", C_DIM, 0);
-    text(16, 455, "START edit   MENU + SELECT leave RAW   MENU x2 quit", C_PANEL2, 0);
+    text(16, 455, "START play/stop  START+R1 edit  MENU+SELECT leave RAW", C_PANEL2, 0);
 }
 
 /* ================================================================== EDIT screen */
@@ -2025,8 +2027,8 @@ static void draw_edit(void)
     }
     draw_stages(168, 402, 64, 12, 26, selected_stage(), 0);
     draw_beat(440, 456);
-    if (raw_on) text(16, 456, "L1/R1 page  START raw (the engine isn't heard)", C_PANEL2, 0);
-    else text(16, 456, ui.tab == TAB_MIX ? "L1/R1 page  Y reset  START play" : "L1/R1 page  Y dice  START play", C_PANEL2, 0);
+    if (raw_on) text(16, 456, "L1/R1 page  START+L1/R1 to RAW (the engine isn't heard)", C_PANEL2, 0);
+    else text(16, 456, ui.tab == TAB_MIX ? "L1/R1 page  Y reset  START+L1/R1 to PLAY" : "L1/R1 page  Y dice  START+L1/R1 to PLAY", C_PANEL2, 0);
 }
 
 /* ================================================================== input */
@@ -2083,7 +2085,7 @@ static void adjust_param(int id, int dir)
 
 /* ---- rhythm cells on the PLAY page, played like hi5's pattern grid ---- */
 
-/* start / stop: stopping fades the whole sound out over the Start/Stop Fade time (the rhythms run on until it is
+/* START (a tap), from any screen: start / stop. Stopping fades the whole sound out over the Start/Stop Fade time (the rhythms run on until it is
  * silent, then the clock stops); starting begins again from the downbeat and fades back in */
 static void transport_toggle(void)
 {
@@ -2226,7 +2228,6 @@ static void cell_button(int b)
             else { for (int i = 0; i < 4; i++) if (quick[i] > cur) { next = quick[i]; break; } }
             synth_set_param(syn, r, (float)next);
         }
-        if (b == B_A) { transport_toggle(); return; }
         if (q < SEQ_SA && b == B_B) { /* a voice's ring: mute it */
             if (q == SEQ_X) toast("select voice A or B to mute it");
             else toggle_mute(q);
@@ -2354,9 +2355,21 @@ static void log_press(int b)
     ev("press %s%s  (%s)", button_names[b], mods, where);
 }
 
+/* the pages in a ring: PLAY (RAW when it is on), then EDIT's RADIO .. MIX */
+static void page_step(int dir)
+{
+    int n = TAB_COUNT + 1, i = ui.screen == SCR_EDIT ? ui.tab + 1 : 0;
+    i = (i + dir + n) % n;
+    if (i == 0) ui.screen = raw_on ? SCR_RAW : SCR_PLAY;
+    else ui.screen = SCR_EDIT, ui.tab = i - 1;
+    ui.confirm_delete = 0;
+}
+
 static void on_press(int b)
 {
     if (!ui.repeating) log_press(b);
+    if (b == B_START) ui.start_used = ui.held[B_MENU] || ui.overlay != OV_NONE; /* a tap of START starts / stops */
+    else if (ui.held[B_START]) ui.start_used = 1;
     if (b == B_START && ui.held[B_MENU]) { /* MENU + START, from anywhere: a clean slate */
         synth_clean(syn);
         ui.menu_armed = 0;
@@ -2373,6 +2386,7 @@ static void on_press(int b)
 
     /* F1 and F2, from any screen: new Euclidean patterns for every rhythm (each stays on or off as it was), and the
      * dice on every voice and engine setting (as R2 + R1) */
+    if (b == B_F1 || b == B_F2) leds_pressed[b == B_F2] = SDL_GetTicks();
     if (b == B_F1) {
         for (int q = 0; q < SEQ_COUNT; q++) seq_shuffle(q);
         toast("new patterns");
@@ -2394,8 +2408,9 @@ static void on_press(int b)
         return; /* d-pad and face buttons act continuously while held */
     }
     if (b == B_SELECT) { tap_tempo(); return; }
-    if (b == B_START) {
-        ui.screen = ui.screen != SCR_EDIT ? SCR_EDIT : raw_on ? SCR_RAW : SCR_PLAY;
+    if (b == B_START) return; /* start / stop on release, if START was only tapped */
+    if (ui.held[B_START]) { /* START + L1 / R1, from anywhere: previous / next page, PLAY (or RAW) first */
+        if (b == B_L1 || b == B_R1) page_step(b == B_R1 ? 1 : -1);
         return;
     }
     if (ui.screen == SCR_RAW) { raw_button(b); return; }
@@ -2454,6 +2469,7 @@ static void on_press(int b)
 
 static void on_release(int b)
 {
+    if (b == B_START && !ui.start_used && ui.overlay == OV_NONE) transport_toggle(); /* a tap of START */
     if (ui.screen == SCR_PLAY && ui.overlay == OV_NONE && b == B_L2 && !ui.l2_used) do_grab(play_voice()); /* a tap of L2 */
 }
 
@@ -2462,7 +2478,7 @@ static void held_keys_update(Uint32 now)
     static const int keys[8] = {B_UP, B_DOWN, B_LEFT, B_RIGHT, B_X, B_B, B_Y, B_A};
     for (int i = 0; i < 8; i++) {
         int b = keys[i];
-        if (!ui.held[b]) continue;
+        if (!ui.held[b] || ui.held[B_START]) continue; /* START + a button does nothing more */
         if (ui.screen == SCR_PLAY && ui.overlay == OV_NONE && ui.held[B_R2]) {
             /* real-time sound: d-pad = filter (up brighter) / morph (right toward B), X/B = fold, Y/A = space */
             float step = ui.held[B_L2] ? 0.004f : 0.015f;
@@ -2705,8 +2721,26 @@ static void leds_update(void)
     enum { LED_A = 0x50e030, LED_B = 0xffa020, LED_WATER = 0x40c8d0 };
     float lx = sweep[0], ly = -sweep[1], rx = rstick[0], ry = -rstick[1]; /* the rings' y is up */
     int run = synth_running(syn);
+    float fade = synth_fade_level(syn), heard = raw_on ? 0.0f : fade * fade; /* RAW: the engine isn't heard */
+    /* F1 / F2: voice A / B, as loud as it plays (dark when muted, or while stopped), white for a moment on a press */
+    uint32_t f[2];
+    Uint32 now = SDL_GetTicks();
+    for (int o = 0; o < 2; o++) {
+        float db = 20.0f * log10f(synth_mix_meter(syn, o ? MIX_B : MIX_A) + 1e-6f), lv = (db + 42.0f) / 42.0f;
+        f[o] = ringleds_glow(o ? LED_B : LED_A, lv * heard);
+        Uint32 ago = now - leds_pressed[o];
+        if (leds_pressed[o] && ago < 250) f[o] = ringleds_glow(0xffffff, 1.0f - ago / 250.0f);
+    }
+    /* L1 / R1: voice A's / B's rhythm, a flash on each pulse (dark while its rhythm is off: the voice plays on);
+     * L2 / R2: the beat */
+    uint32_t sh[2];
+    for (int o = 0; o < 2; o++) {
+        int q = o ? SEQ_B : SEQ_A, on = (int)synth_get_param(syn, SEQ_PARAM(q, 0)) && run;
+        sh[o] = on ? ringleds_glow(o ? LED_B : LED_A, synth_seq_flash(syn, q) * fade) : 0;
+    }
+    ringleds_shoulders(sh[0], RINGLEDS_BEAT, sh[1], RINGLEDS_BEAT);
     ringleds_update(lx, ly, leds_axis_col(lx, ly, LED_A, LED_A, LED_B), rx, ry, leds_axis_col(rx, ry, LED_A, LED_B, LED_WATER),
-                    run, run ? (int)floor(sc_position()) : 0, sc_bpm(), 0, 0);
+                    run, run ? (int)floor(sc_position()) : 0, sc_bpm(), f[0], f[1]);
 }
 
 /* how many stations from home the stick has a voice: off is the offset now, kept until the stick is well past the
@@ -3530,9 +3564,15 @@ static int joy_test(void)
     jt_pump();
     int ok = 1, r;
 #define JT_CHECK(what, cond) (r = (cond), ok &= r, printf("joy %s: %d\n", what, r))
-    jt_button(7, 1);
-    JT_CHECK("START (7) opens EDIT", ui.screen == SCR_EDIT && ui.held[B_START]);
-    jt_button(7, 0);
+    int was_running = synth_running(syn);
+    jt_button(7, 1), jt_button(7, 0);
+    JT_CHECK("START (7) tapped starts / stops", synth_running(syn) != was_running && ui.screen == SCR_PLAY);
+    jt_button(7, 1), jt_button(7, 0);
+    jt_button(7, 1), jt_button(5, 1), jt_button(5, 0);
+    JT_CHECK("START + R1 opens EDIT's first page", ui.screen == SCR_EDIT && ui.tab == 0 && ui.held[B_START]);
+    jt_button(4, 1), jt_button(4, 0), jt_button(7, 0);
+    JT_CHECK("START + L1 back to PLAY, without starting / stopping", ui.screen == SCR_PLAY && synth_running(syn) == was_running);
+    ui.screen = SCR_EDIT;
     int tab = ui.tab;
     jt_button(5, 1), jt_button(5, 0);
     JT_CHECK("R1 (5) next page", ui.tab == (tab + 1) % TAB_COUNT);
@@ -3942,6 +3982,21 @@ static int led_test(const char *out)
     /* the bar: the left channel all the way out (LEDs 4 .. 1, red at the end), the right dark */
     int bar = c[0] == 0xff2010 && c[3] && !c[4] && !c[5] && !c[6] && !c[7];
     int beat = c[18] && c[19] && c[20] && c[21] && (c[18] >> 16) > (c[18] & 0xff), others = !c[8] && !c[9] && !c[22];
+    /* the shoulders as the app sets them: L1 a colour, R1 dark, L2 and R2 still the beat */
+    ringleds_shoulders(0x123456, RINGLEDS_BEAT, 0, RINGLEDS_BEAT);
+    ringleds_update(0.f, 1.f, 0x46b4ff, 1.f, 0.f, 0xff2030, 1, 0, 120.f, 0x00ff00, 0);
+    LED_READ("frame_hex");
+    unsigned c2[23] = {0};
+    n = 0;
+    for (char *q = v; n < 23 && *q;) {
+        char *e;
+        unsigned long x = strtoul(q, &e, 16);
+        if (e == q)
+            break;
+        c2[n++] = (unsigned)x, q = e;
+    }
+    int own = n == 23 && c2[18] == 0x123456 && c2[19] == c[19] && c2[20] == c[20] && !c2[21] && c2[9] == 0x00ff00;
+    ringleds_shoulders(RINGLEDS_BEAT, RINGLEDS_BEAT, RINGLEDS_BEAT, RINGLEDS_BEAT);
     ringleds_close();
     LED_READ("frame_hex");
     int dark = !strncmp(v, "000000 000000", 13);
@@ -3955,10 +4010,10 @@ static int led_test(const char *out)
     back &= atoi(v) == 0;
     back &= access("ringleds_saved.txt", F_OK) != 0;
     printf("leds: driven %d, effects off %d, bright %d; rings point with the sticks %d, level bar %d, beat on the "
-           "shoulders %d, the rest dark %d; given back (dark frame, effects on): %d\n",
-           opened, effects_off, bright, rings, bar, beat, others, dark && back);
+           "shoulders %d, the rest dark %d; shoulders and F1 as the app sets them %d; given back (dark frame, effects on): %d\n",
+           opened, effects_off, bright, rings, bar, beat, others, own, dark && back);
     unsetenv(LED_PREFIX "_LED_FRAME");
-        int good = opened && effects_off && bright && rings && bar && beat && others && dark && back;
+        int good = opened && effects_off && bright && rings && bar && beat && others && own && dark && back;
     printf("ledtest: %s\n", good ? "all good" : "FAILED");
     return !good;
 }
