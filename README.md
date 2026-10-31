@@ -220,7 +220,6 @@ ring is outlined, and every change shows its pattern briefly, like `A  E(5,8) >2
 | hold L2 + left / right | rate: jump between 1/4, 1/8, 1/16 and 1/32 (right = faster; every rate is on the RHYTHM page) |
 | hold L2 + Y / X | gate length shorter / longer (a stutter: fewer / more ratchets) |
 | hold L2 + B | mute / unmute the selected voice (on a stutter ring: its mode) |
-| hold L2 + A | start / stop: stop fades all the sound out (the rhythms play on until it is silent, then stop); start begins on the downbeat and fades back in. The fade time is **Start/Stop Fade** on the RHYTHM page |
 | tap L2 | grab a fresh slice for the selected voice (both voices when the cross rhythm is selected) |
 | hold R2 + D-pad | up/down: filter brighter / darker; left/right: morph toward A / B |
 | hold R2 + X / B | fold more / less |
@@ -230,7 +229,8 @@ ring is outlined, and every change shows its pattern briefly, like `A  E(5,8) >2
 | F2 | dice on every voice and engine setting (as R2 + R1) |
 | L1 / R1 | pitch down / up an octave (LOOP, WAVE and GRAIN voices) |
 | SELECT | tap tempo |
-| START | go to EDIT |
+| START | start / stop (any screen; see below) |
+| START + L1 / R1 | previous / next page (any screen): R1 goes to EDIT's RADIO page, L1 to MIX |
 | hold MENU + START | clean slate (any screen): both voices plain LIVE feeds, no effects |
 | hold MENU + SELECT | RAW in / out (any screen): the two stations untouched, with a crossfader |
 | MENU twice | quit |
@@ -245,7 +245,8 @@ ring is outlined, and every change shows its pattern briefly, like `A  E(5,8) >2
 | Y | roll the dice on the selected section |
 | F1 / F2 | new Euclidean patterns / dice on the sound, as on PLAY |
 | SELECT | tap tempo |
-| START | back to PLAY |
+| START | start / stop |
+| START + L1 / R1 | previous / next page, PLAY included (R1 on MIX or L1 on RADIO goes to PLAY) |
 | hold MENU + START | clean slate (see below) |
 
 **MIX page:** faders in four groups: VOICE A and VOICE B (a level fader with a drive knob under it), EFFECTS
@@ -260,6 +261,12 @@ the ENGINE page still sets its character (echo feedback, reverb length, how hard
 
 **RADIO page:** A sends the selected station to voice A and B sends it to voice B. Y adds a URL, X deletes
 (press twice), L2 sets the station's kind (voice / music / sound), and R2 scans the directory.
+
+**Start / stop (tap START, from any screen):** stop fades all the sound out (the rhythms play on until it is
+silent, then stop); start begins on the downbeat and fades back in. The fade time is **RHYTHM → CLOCK →
+Start/Stop Fade** (cut, 0.5 to 16 s; 2 s by default). START only starts or stops when it is let go without another
+button pressed, so START + L1 / R1 just changes page. The pages go round in a ring: PLAY (RAW while RAW is on), then
+EDIT's RADIO, VOICES, RHYTHM, ENGINE, MOD and MIX.
 
 **Clean slate (hold MENU + START, from any screen):** both voices become plain LIVE feeds at unity level (no
 pitch, crush, oscillator or drive, unmuted), the gate, stutter and cross rhythms are switched off (their patterns
@@ -281,7 +288,8 @@ Hold MENU + SELECT again to go back to the engine. The switch either way is a 10
 | D-pad up / down | fade time: cut, 0.5, 1, 2, 4, 8 or 16 s for the whole way across |
 | hold L2 + up / down | the previous / next station on A |
 | hold R2 + up / down | the previous / next station on B |
-| START | EDIT (the RADIO page picks stations too); START again comes back to RAW |
+| START | start / stop (the engine underneath; RAW plays on) |
+| START + L1 / R1 | EDIT (the RADIO page picks stations too); START + L1 / R1 from RADIO / MIX comes back to RAW |
 
 Each side shows its station, its song title, a meter of the stream as it arrives and how much the fader lets
 through. Only the crossfade happens to the sound. At either end of the fader the other station is
@@ -322,8 +330,9 @@ On the Brick Pro RadioScan drives the lights one by one:
 | left stick's ring | Points where the left stick is pushed, brighter the further: green across (voice A), amber up and down (voice B) |
 | right stick's ring | Points where the right stick is pushed: green toward voice A, amber toward voice B (morph), blue up and down (the filter) |
 | top bar | A stereo level meter of the output, from the centre out: the left channel to the left, the right to the right, green rising to amber and red near full scale |
-| under L1, L2, R1, R2 | The beat while the rhythm runs: a flash each quarter note, orange on the bar's first |
-| F1, F2 | Dark |
+| under L1, R1 | Voice A's (green) / voice B's (amber) rhythm: a flash on each pulse; dark while that rhythm is off or stopped |
+| under L2, R2 | The beat while the rhythm runs: a flash each quarter note, orange on the bar's first |
+| F1, F2 | Voice A (green) / voice B (amber), as loud as it plays: they pulse with each voice's rhythm, fade with a stop and go dark when the voice is muted or in RAW. A press flashes the button white |
 
 They come on with MustardOS's Brick Pro controller; on TrimUI OS, with the first move of a stick. When RadioScan
 closes the lights go back to how they were. Settings in `launch.sh`: `RS_LEDS=0` leaves the lights alone,
@@ -380,7 +389,7 @@ it with a stereo-to-two-mono cable and plug the clock side into a Pocket Operato
 | PPQN | pulses per quarter note: 1, 2 (Pocket Operators, Volcas; the default), 4, 8, 16, 24 (DIN sync) or 32 |
 | Pulse Width | 1 to 20 ms (5 by default) |
 
-The pulses follow the same clock as the rhythms, so tap tempo, start / stop (L2 + A) and Wi-Fi sync carry
+The pulses follow the same clock as the rhythms, so tap tempo, start / stop (START) and Wi-Fi sync carry
 through: stopped, there are no pulses (while a stop fades out the pulses carry on, then stop with the sound). They leave with the sound, after the limiter's 1.5 ms look-ahead, so each
 lands on its beat. In mono + clock every pan and stereo spread plays from the centre: each voice's Pan (and an
 LFO on it), the grains' spread and Stereo Width. The settings are kept and come back with STEREO; their rows say

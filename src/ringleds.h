@@ -14,7 +14,8 @@
  *               rising to amber and red near full scale
  *   rings       each points where its stick is pushed, its corners brighter
  *               the further it goes, in a colour the app chooses
- *   L1 L2 R1 R2 the beat: a flash on each, orange on the bar's first
+ *   L1 L2 R1 R2 the beat: a flash on each, orange on the bar's first (or
+ *               as the app chooses, ringleds_shoulders)
  *   F1, F2      as the app chooses (dark by default)
  * The named effects are off while the frame shows (effect_enable 0); at the
  * end the frame goes dark and the settings found at start (colours,
@@ -38,4 +39,10 @@ void ringleds_audio(const int16_t *s, int frames);
  * F1's and F2's colours (0: dark). Written only when something changes. */
 void ringleds_update(float lx, float ly, uint32_t lcol, float rx, float ry, uint32_t rcol, int playing, int step,
                      float bpm, uint32_t f1, uint32_t f2);
+/* main thread: the shoulder LEDs' colours from the next ringleds_update on;
+ * RINGLEDS_BEAT (the default) shows the beat there, as above */
+#define RINGLEDS_BEAT 0xffffffffu
+void ringleds_shoulders(uint32_t l1, uint32_t l2, uint32_t r1, uint32_t r2);
+/* a colour at an intensity 0..1, on the same curve the LEDs use */
+uint32_t ringleds_glow(uint32_t c, float t);
 void ringleds_close(void);
