@@ -12,7 +12,7 @@
 /* the version for untagged builds; a release build gets its version from the release tag
  * (make VERSION=x.y.z, which passes -DRS_VERSION). The app offers any newer release. */
 #ifndef RS_VERSION
-#define RS_VERSION "0.8.2"
+#define RS_VERSION "0.5.0"
 #endif
 #define RS_REPO "sydilaxe/Trimui-RadioScan-dev"
 /* the release files, each with the folder its zip holds the app in */
