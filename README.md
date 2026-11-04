@@ -14,6 +14,8 @@ screen. What's new on the TrimUI: half the Miyoo's audio delay, a USB sound card
 it's plugged in, and the Brick Pro's sticks sweep the stations and play morph and the filter by hand. Settings and
 station lists from the Miyoo load as they are.
 
+**Latest release:** [v0.5.0](../../releases/tag/v0.5.0) · [all releases](../../releases)
+
 ## How it works
 
 - **Two radio voices.** Each voice plays one station with one of four engines:
@@ -440,11 +442,11 @@ when its folder has `mux_launch.sh` (`mustardos/`), which only that package carr
 
 Any of these builds, tests and publishes a GitHub Release with `RadioScan-trimui.zip` and
 `RadioScan-mustardos.muxapp` attached (notes come from
-`.github/release-notes.md`). The release is built as the version in its tag (`make VERSION=0.2.0`), which the app
+`.github/release-notes.md`). The release is built as the version in its tag (`make VERSION=1.2.3`), which the app
 compares with newer release tags, so there's no need to bump the source first. The tag must look like `v1.2.3`.
-`RS_VERSION` in `src/update.h` is only the version of untagged builds; keep it at the latest release.
+`RS_VERSION` in `src/update.h` is only the version of untagged builds; keep it, and the README's **Latest release** line, at the latest release (CI checks the two match).
 
-- **Actions → build → Run workflow**, with a tag such as `v0.2.0` filled in.
+- **Actions → build → Run workflow**, with a tag such as `v1.2.3` filled in.
 - Push a version tag: `git tag v0.2.0 && git push origin v0.2.0`.
 - Create a release on the GitHub website; the zip is added to it automatically.
 
