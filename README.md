@@ -352,7 +352,34 @@ works from any page:
   morph, filter, resonance, FM, ring, converse, vocode, drive, fold, crush, echo, space, width, volume, tempo,
   bass and treble.
 
-[docs/MIDI.md](docs/MIDI.md) is the full MIDI implementation chart. `RS_MIDI=0` in `launch.sh` turns MIDI off.
+- **Clock** (RHYTHM, MIDI CLOCK): **MIDI Clock** picks which way it goes. **AUTO** (the default) sends clock (24 a
+  quarter note), START and STOP to every MIDI port while the rhythms run, and follows a clock that comes in
+  instead; **SEND** always sends and ignores one coming in; **FOLLOW** only follows; **OFF** neither. A clock coming
+  in sets the tempo (a straight line through the last four beats of ticks, so USB's jitter averages out: within a
+  few tenths of a millisecond at 250 BPM) and its phase is held on the sound as it is heard, as Wi-Fi sync does;
+  START, CONTINUE, STOP and song position start, stop and place the rhythms. **MIDI Start/Stop** set to **IGNORE**
+  follows the tempo only, so you start and stop RadioScan yourself. The clock going out is timed to the sound as
+  it is heard (the audio clock, through whichever output plays it), so a drum machine lands on the beat, with USB
+  audio on the same hub too.
+
+[docs/MIDI.md](docs/MIDI.md) is the full MIDI implementation chart. `RS_MIDI=0` in `launch.sh` turns MIDI off;
+`RS_MIDI_CLOCK=0` never sends clock and `RS_MIDI_FOLLOW=0` never follows it, whatever MIDI Clock says.
+
+## Linking Bricks over USB
+
+Several Bricks can play in time with one, by cable, with no MIDI interface between them: the **leader** has a
+powered USB hub in its **top** port, and each **follower** plugs its **bottom** (charging) port into the hub with a
+data cable. The wiring decides who leads, and any number can follow (up to eight MIDI devices and Bricks on the
+leader together). Columbia Street, HI5 and Jaffedrone link the same way, so a Brick running any of them can lead
+RadioScan, or follow it.
+
+Nothing to set up: RadioScan offers its bottom port as a "TrimUI clock link" (TrimUI's kernel has no USB MIDI
+gadget, so the link is the apps' own), and a leader finds the Bricks on its hub within a second and sends them its
+clock with START and STOP, plus where its sound is about 50 times a second. Each follower moves its own sound onto
+that, measured by its audio clock, so they sound together within a tenth of a millisecond, at any tempo up to 250
+BPM. A follower plugged in mid-song comes in at the leader's place; one set to MIDI Start/Stop IGNORE keeps the
+leader's tempo and bar but is started and stopped by hand. A leader that follows a drum machine's clock passes it
+on. `RS_LINK=0` in `launch.sh` leaves the bottom port alone.
 
 ## Wi-Fi sync
 
@@ -491,6 +518,9 @@ governor back afterwards), as the other TrimUI ports do. It has a few optional s
   speaker comes back when it's unplugged.
 - `RS_ROTATE`: 90, 180 or 270 turns the picture, for a firmware whose screen is turned.
 - `RS_JOYMAP`: another firmware's button numbers, e.g. `RS_JOYMAP=A=0,B=1`.
+- `RS_MIDI=0`: no USB MIDI (and no clock link); `RS_MIDI_CLOCK=0` / `RS_MIDI_FOLLOW=0`: never send / follow MIDI
+  clock, whatever RHYTHM's MIDI Clock says; `RS_LINK=0`: leave the bottom USB port alone (see
+  [Linking Bricks over USB](#linking-bricks-over-usb)).
 - `RS_MLOCK=0`: don't lock the program in memory (it is by default, so the sound never waits on a page being read
   back in).
 - `RS_UPDATE`: set it to 0 to stop RadioScan checking GitHub for updates (on by default on the TrimUI, off on

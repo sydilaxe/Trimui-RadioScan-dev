@@ -24,6 +24,13 @@ the Miyoo version: keep it the same so changes can be carried across in either d
 one place: it picks the release file (`RadioScan-trimui.zip`, or `RadioScan-mustardos.muxapp` when the app folder
 has `mux_launch.sh`; keep `mux_launch.sh` out of the TrimUI OS zip).
 
+`src/midi.c` is USB MIDI: notes and CCs for the main thread, and the MIDI clock in and out, run from the MIDI thread
+through the main program's clock (`MidiClock`, the same calls Wi-Fi sync makes). `src/link.c` is the clock link
+between Bricks (a follower's bottom port as a USB gadget through configfs and FunctionFS, found and driven by the
+leader through usbfs); keep it and the link's messages in `midi.c` the same as Columbia Street's, HI5's and
+Jaffedrone's (`link.c` differs only in `RS_LINK` and calling `midi_feed_at`), so the apps link to each other.
+`radioscan --miditest` checks the clock and the link.
+
 `src/perflog.c` (the performance log in `log.txt`, `RS_LOG`) and `Apps/RadioScan/sysinfo.sh` (`sysinfo.txt`) are
 shared with HI5 (and `sysinfo.sh` with Jaffedrone); keep the copies the same. So is `src/ringleds.c`, the Brick
 Pro's lights. The audio callback only calls

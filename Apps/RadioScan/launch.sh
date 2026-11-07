@@ -19,6 +19,8 @@ export RADIOSCAN_DIR="$(pwd)"
 # export RS_RATE=44100      # a lower sample rate: a little less work (48000 by default)
 # export RS_RT=0            # don't give the audio thread real-time priority (to compare, if the sound stalls)
 # export RS_UPDATE=0        # don't check GitHub for new versions
+# export RS_MIDI=0          # no USB MIDI (and no clock link);  RS_MIDI_CLOCK=0 / RS_MIDI_FOLLOW=0: never send / follow clock
+# export RS_LINK=0          # leave the bottom USB port alone (no clock link from a leading Brick)
 # export RS_AUDIO=internal  # always the speaker and headphones (default: a USB audio device when one is plugged in)
 # export RS_AUDIO=<name>    # the output device whose name contains <name> (see log.txt)
 # export RS_ROTATE=180      # turn the picture, for a firmware whose screen is turned
