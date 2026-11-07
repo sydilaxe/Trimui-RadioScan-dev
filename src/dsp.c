@@ -34,6 +34,8 @@ static const char *const fades[] = {"CUT", "0.5 s", "1 s", "2 s", "4 s", "8 s", 
 static const float fade_s[] = {0.01f, 0.5f, 1, 2, 4, 8, 16}; /* CUT is 10 ms, so it doesn't click */
 static const char *const outputs[] = {"STEREO", "MONO + CLOCK", NULL};
 static const char *const clk_sides[] = {"RIGHT", "LEFT", NULL};
+static const char *const midi_modes[] = {"AUTO", "SEND", "FOLLOW", "OFF", NULL};
+static const char *const midi_starts[] = {"FOLLOW", "IGNORE", NULL};
 static const char *const ppqns[] = {"1", "2  PO / VOLCA", "4", "8", "16", "24  DIN", "32", NULL};
 static const int ppqn_values[] = {1, 2, 4, 8, 16, 24, 32};
 int clk_ppqn_value(int i) { return ppqn_values[i < 0 ? 0 : i > 6 ? 6 : i]; }
@@ -107,6 +109,8 @@ const ParamInfo param_info[P_COUNT] = {
     [P_CLK_SIDE]  = {"clock_side", "Clock On", PAGE_RHYTHM, 0, 1, 0, 1, 0, "", clk_sides},
     [P_CLK_PPQN]  = {"clock_ppqn", "PPQN", PAGE_RHYTHM, 0, 6, 1, 1, 0, "", ppqns},
     [P_CLK_PULSE] = {"clock_pulse", "Pulse Width", PAGE_RHYTHM, 1, 20, 5, 1, 0, "ms", NULL},
+    [P_MIDI]       = {"midi_clock", "MIDI Clock", PAGE_RHYTHM, 0, 3, 0, 1, 0, "", midi_modes},
+    [P_MIDI_START] = {"midi_start", "MIDI Start/Stop", PAGE_RHYTHM, 0, 1, 0, 1, 0, "", midi_starts},
     [P_VOCODE]     = {"vocode", "Vocode", PAGE_ENGINE, 0, 2, 0, 1, 0, "", vocodes},
     [P_VOCODE_AMT] = {"vocode_amt", "Vocode Amount", PAGE_ENGINE, 0, 1, 0.8f, 0.05f, 0, "", NULL},
     [P_BANDS]      = {"bands", "Vocode Bands", PAGE_ENGINE, 0, 4, 2, 1, 0, "", band_names},
@@ -155,6 +159,7 @@ const char *param_section(int id)
     if (id >= P_X_GATE_ON) return "RHYTHM CROSS";
     if (id <= P_FADE) return "CLOCK";
     if (id <= P_CLK_PULSE) return "CLOCK OUT";
+    if (id <= P_MIDI_START) return "MIDI CLOCK";
     if (id <= P_CONVERSE) return "CROSS";
     if (id <= P_ROOT) return "KEY";
     if (id <= P_CRUSH) return "SHAPE";
@@ -712,7 +717,7 @@ static int dice_excluded(int id)
     int o = osc_of(id);
     int f = o >= 0 ? osc_field(id) : id;
     return f == P_A_STATION || f == P_A_FOCUS || f == P_A_DRIVE || f == P_A_MUTE || id == P_VOLUME || id == P_BPM || id == P_SYNC || id == P_FADE || id == P_ROOT ||
-           (id >= P_OUTPUT && id <= P_CLK_PULSE) ||
+           (id >= P_OUTPUT && id <= P_MIDI_START) ||
            (id >= P_CROSS_LEVEL && id <= P_AUTO_LEVEL); /* the effect returns stay where the player set them */
 }
 

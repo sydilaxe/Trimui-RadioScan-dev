@@ -16,9 +16,11 @@ one. Everything below works from any page.
 | Pitch bend | none | no | |
 | Control change | none | yes | The settings in the CC table below. |
 | Program change | none | no | |
-| System exclusive | none | no | |
-| Song position, song select | none | no | |
-| Clock, Start, Stop | none | no | The rhythms keep their own tempo (and Wi-Fi sync). |
+| System exclusive | yes | yes | Only the Brick link's position (`F0 7D 'T' 'L' ... F7`, 14 bytes, about 50 a second, to linked Bricks only); others pass by. |
+| Song position | none | yes | Places the rhythms, in 16ths (not with MIDI Start/Stop set to IGNORE). |
+| Song select | none | no | |
+| Clock | yes | yes | Out: 24 a quarter note while the rhythms run and no clock comes in, timed to the sound as it is heard. In: the tempo follows it, and its phase is held. RHYTHM's MIDI Clock picks the way (AUTO, SEND, FOLLOW, OFF). `RS_MIDI_CLOCK=0` sends none; `RS_MIDI_FOLLOW=0` ignores it. |
+| Start, Continue, Stop | yes | yes | Out with the rhythms. In: START from the top, CONTINUE, STOP; ignored with MIDI Start/Stop set to IGNORE. |
 | Active sensing, reset | none | no | |
 
 `RS_MIDI=0` in `launch.sh` turns MIDI off.

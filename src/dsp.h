@@ -31,6 +31,7 @@ enum {
     VOICE_FIELDS(B),
     P_BPM, P_SYNC, P_FADE, /* P_FADE: how long start / stop fades the sound in / out */
     P_OUTPUT, P_CLK_SIDE, P_CLK_PPQN, P_CLK_PULSE, /* stereo, or mono sound + clock pulses for other gear */
+    P_MIDI, P_MIDI_START, /* the MIDI clock over USB: which way (midi.h's MIDI_*), and START / STOP followed or not */
     P_VOCODE, P_VOCODE_AMT, P_BANDS, P_FM, P_FM_DIR, P_RING, P_MORPH, P_CONVERSE,
     P_ROOT,
     P_TONE, P_RESO, P_LOW, P_HIGH, P_DRIVE, P_FOLD, P_CRUSH,

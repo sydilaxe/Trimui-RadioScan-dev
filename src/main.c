@@ -37,6 +37,7 @@
 #include "stream.h"
 #include "sync.h"
 #include "midi.h"
+#include "link.h"
 #include "update.h"
 
 #ifndef M_PI
@@ -736,11 +737,19 @@ static void sc_set_playing(int on) { synth_set_running(syn, on); }
 static const SyncClock sync_clock = {sc_mode, sc_bpm, sc_set_bpm, sc_position, sc_set_position,
                                      sc_set_rate, sc_playing, sc_set_playing};
 
+/* the MIDI clock and the Brick link (midi.c, from its thread): the same clock, at the tempo it is given exactly */
+static int mc_mode(void) { return (int)synth_get_param(syn, P_MIDI); }
+static int mc_clock_only(void) { return (int)synth_get_param(syn, P_MIDI_START) != 0; }
+static void mc_set_bpm(float b) { synth_set_param(syn, P_BPM, b); }
+static const MidiClock midi_clock = {mc_mode, mc_clock_only, sc_bpm, mc_set_bpm, sc_position, sc_set_position,
+                                     sc_set_rate, sc_playing, sc_set_playing};
+
 
 static void tap_tempo(void)
 {
     Uint32 now = SDL_GetTicks();
     if (sync_status()->following) { toast("following the lead unit's tempo"); return; }
+    if (midi_following()) { toast("following the MIDI clock's tempo"); return; }
     if (ui.ntaps > 0 && now - ui.taps[ui.ntaps - 1] > 2000) ui.ntaps = 0;
     if (ui.ntaps == 8) { memmove(ui.taps, ui.taps + 1, sizeof(Uint32) * 7); ui.ntaps = 7; }
     ui.taps[ui.ntaps++] = now;
@@ -3771,7 +3780,7 @@ static int midi_cc(int cc, int v)
         if (midi_cc_map[i].cc == cc) {
             int id = midi_cc_map[i].id;
             float x = midi_cc_value(id, v);
-            if (id == P_BPM && sync_status()->following) return 1; /* the lead unit sets the tempo */
+            if (id == P_BPM && (sync_status()->following || midi_following())) return 1; /* the lead unit sets the tempo */
             if (x != synth_get_param(syn, id)) {
                 synth_set_param(syn, id, x);
                 ui.dirty_settings = 1;
@@ -3854,6 +3863,251 @@ static int midi_chart(void)
     return 0;
 }
 
+/* the synth run for a while with no radio, as the audio callback runs it */
+static void mt_render(int frames)
+{
+    static float z[2048 * 2], o[2048 * 2];
+    while (frames > 0) {
+        int n = frames > 1024 ? 1024 : frames;
+        synth_process(syn, z, z, o, n);
+        frames -= n;
+    }
+}
+
+static void mt_fresh(int mode, int clock_only, float lat)
+{
+    synth_set_running(syn, 0);
+    synth_set_clock_rate(syn, 1.0);
+    synth_set_position(syn, 0);
+    synth_set_param(syn, P_BPM, 80);
+    synth_set_param(syn, P_MIDI, (float)mode);
+    synth_set_param(syn, P_MIDI_START, (float)clock_only);
+    midi_reset();
+    midi_set_latency(lat);
+    mt_render(48000); /* the stop's fade over */
+}
+
+/* the MIDI clock (the RHYTHM page's MIDI Clock and Start/Stop), the tight clock in, and the Brick link */
+static int clock_test(void)
+{
+    enum { RATE = 48000 };
+    midi_set_clock(&midi_clock);
+    const uint8_t start = 0xfa, stop = 0xfc, tick = 0xf8;
+    /* AUTO follows and sends, SEND only sends, FOLLOW only follows, OFF neither */
+    int got[NMIDIMODE][2], modes_ok = 1;
+    static const int want[NMIDIMODE][2] = {{1, 1}, {0, 1}, {1, 0}, {0, 0}};
+    uint64_t t = 1000000;
+    for (int m = 0; m < NMIDIMODE; m++) {
+        mt_fresh(m, 0, 0.f);
+        midi_feed_at(&start, 1, t);
+        for (int i = 0; i < 48; i++) {
+            t += 20833;
+            midi_feed_at(&tick, 1, t);
+            mt_render(1000);
+        }
+        got[m][0] = midi_following() && synth_running(syn);
+        midi_feed_at(&stop, 1, t);
+        mt_fresh(m, 0, 0.f);
+        synth_set_running(syn, 1);
+        uint8_t out[64];
+        int ticks = 0;
+        for (int i = 0; i < 100; i++) {
+            mt_render(RATE / 100);
+            t += 10000;
+            int n = midi_clock_step(t, out, sizeof out);
+            for (int k = 0; k < n; k++)
+                ticks += out[k] == 0xf8;
+        }
+        synth_set_running(syn, 0);
+        midi_clock_step(t + 10000, out, sizeof out);
+        got[m][1] = ticks > 0;
+        modes_ok &= got[m][0] == want[m][0] && got[m][1] == want[m][1];
+    }
+    printf("miditest modes (follows, sends): AUTO %d %d, SEND %d %d, FOLLOW %d %d, OFF %d %d: %d\n", got[0][0],
+           got[0][1], got[1][0], got[1][1], got[2][0], got[2][1], got[3][0], got[3][1], modes_ok);
+
+    /* clock out: 24 a quarter note at 120 BPM, with START and STOP */
+    mt_fresh(MIDI_AUTO, 0, 0.f);
+    synth_set_param(syn, P_BPM, 120);
+    synth_set_running(syn, 1);
+    int ticks_out = 0, starts = 0, stops = 0;
+    uint8_t out[64];
+    for (int i = 0; i < 400; i++) {
+        mt_render(RATE / 100);
+        t += 10000;
+        int n = midi_clock_step(t, out, sizeof out);
+        for (int k = 0; k < n; k++)
+            ticks_out += out[k] == 0xf8, starts += out[k] == 0xfa;
+    }
+    synth_set_running(syn, 0);
+    int n = midi_clock_step(t + 10000, out, sizeof out);
+    for (int k = 0; k < n; k++)
+        stops += out[k] == 0xfc;
+    int out_ok = starts == 1 && abs(ticks_out - 192) <= 1 && stops == 1;
+    printf("miditest clock out: START %d, %d ticks in 4 s at 120 BPM (want 192), STOP %d: %d\n", starts, ticks_out,
+           stops, out_ok);
+
+    /* clock only: START and STOP pass by, the tempo still follows */
+    mt_fresh(MIDI_AUTO, 1, 0.f);
+    midi_feed_at(&start, 1, t);
+    int start_ignored = !synth_running(syn);
+    for (int i = 0; i < 48; i++) {
+        t += 20833;
+        midi_feed_at(&tick, 1, t);
+        mt_render(1000);
+    }
+    int tempo = midi_following() && fabsf(synth_get_param(syn, P_BPM) - 120.f) < 0.2f;
+    synth_set_running(syn, 1); /* started by hand */
+    midi_feed_at(&stop, 1, t);
+    int stop_ignored = synth_running(syn);
+    int only_ok = start_ignored && stop_ignored && tempo;
+    printf("miditest clock only: START ignored %d, STOP ignored %d, the tempo followed %d: %d\n", start_ignored,
+           stop_ignored, tempo, only_ok);
+
+    /* plain MIDI clock at 250 BPM (a tick every 10 ms), each up to 2 ms late at random: how much the sound
+     * wobbles around its average offset */
+    mt_fresh(MIDI_AUTO, 0, 0.f);
+    t = 20000000;
+    midi_feed_at(&start, 1, t);
+    mt_render(64);
+    static double tk_err[24 * 8];
+    int ne = 0;
+    for (int i = 1; i <= 24 * 32; i++) {
+        int late = rand() % (int)(0.002 * RATE + 1);
+        mt_render(late);
+        midi_feed_at(&tick, 1, t + 10000 + (uint64_t)late * 1000000 / RATE);
+        mt_render(RATE / 100 - late);
+        t += 10000;
+        if (i > 24 * 24 && ne < 24 * 8)
+            tk_err[ne++] = synth_position(syn) - i / 6.0;
+    }
+    midi_feed_at(&stop, 1, t);
+    double mean = 0.0, wob = 0.0;
+    for (int k = 0; k < ne; k++)
+        mean += tk_err[k] / ne;
+    for (int k = 0; k < ne; k++)
+        wob = fmax(wob, fabs(tk_err[k] - mean));
+    double tick_ms = wob * 15000.0 / 250.0;
+    float bpm250 = synth_get_param(syn, P_BPM);
+    int tick_ok = tick_ms < 0.5 && fabsf(bpm250 - 250.f) < 0.5f;
+    printf("miditest clock in at 250 BPM: the tempo %.1f, the sound within %.3f ms of steady (want under 0.5): %d\n",
+           bpm250, tick_ms, tick_ok);
+
+    /* the link: a leader sends where its sound is every 20 ms; this one, stopped, joins it mid-song and holds it */
+    static const double tempos[] = {137.37, 200.0, 224.5, 250.0};
+    double worst_at[4], worst_ms = 0.0, bpm = 0.0, lat = 1024.0 / RATE, lead0 = 37.25;
+    int joined = 1, exact = 1;
+    uint8_t msg[16];
+    for (int k = 0; k < 4; k++) {
+        bpm = tempos[k];
+        mt_fresh(MIDI_AUTO, 0, (float)lat);
+        t = 5000000;
+        double worst = 0.0;
+        for (int i = 0; i < 400; i++) { /* 8 s */
+            double lead = lead0 + (double)(t - 5000000) * 1e-6 * bpm / 15.0;
+            if (i > 150) {
+                double heard = synth_position(syn) - lat * synth_get_param(syn, P_BPM) / 15.0;
+                worst = fmax(worst, fabs(lead - heard));
+            }
+            n = midi_link_pos(msg, sizeof msg, lead, bpm, 1);
+            int late = (int)(0.00015 * RATE) + rand() % (int)(0.0003 * RATE + 1); /* through the hub, at random */
+            mt_render(late);
+            midi_feed_at(msg, n, t + (uint64_t)late * 1000000 / RATE);
+            if (i == 0)
+                joined &= synth_running(syn);
+            mt_render(RATE / 50 - late);
+            t += 20000;
+        }
+        worst_at[k] = worst * 15000.0 / bpm;
+        worst_ms = fmax(worst_ms, worst_at[k]);
+        exact &= fabs(synth_get_param(syn, P_BPM) - bpm) < 0.001;
+    }
+    n = midi_link_pos(msg, sizeof msg, 0.0, bpm, 0);
+    midi_feed_at(msg, n, t);
+    int stops_with = !synth_running(syn);
+    /* clock only over the link: started by hand somewhere else, it lines up the bar and keeps playing */
+    mt_fresh(MIDI_AUTO, 1, (float)lat);
+    synth_set_running(syn, 1);
+    synth_set_position(syn, 5.3);
+    double bar_err = 99.0;
+    for (int i = 0; i < 150; i++) {
+        double lead = lead0 + (double)(t - 5000000) * 1e-6 * bpm / 15.0;
+        n = midi_link_pos(msg, sizeof msg, lead, bpm, 1);
+        midi_feed_at(msg, n, t);
+        mt_render(RATE / 50);
+        t += 20000;
+        if (i == 149) {
+            double heard = synth_position(syn) - lat * synth_get_param(syn, P_BPM) / 15.0;
+            double d = lead + (20000 * 1e-6 + 0.0003) * bpm / 15.0 - heard;
+            bar_err = fabs(d - 16.0 * floor((d + 8.0) / 16.0));
+        }
+    }
+    n = midi_link_pos(msg, sizeof msg, 0.0, bpm, 0);
+    midi_feed_at(msg, n, t);
+    int keeps = synth_running(syn);
+    /* following another clock, it passes it on to the Bricks linked to it */
+    mt_fresh(MIDI_AUTO, 0, 0.f);
+    t = 9000000;
+    midi_feed_at(&start, 1, t);
+    for (int i = 0; i < 48; i++) {
+        t += 20833;
+        midi_feed_at(&tick, 1, t);
+        mt_render(1000);
+    }
+    n = midi_link_step(t + 1, msg, sizeof msg);
+    int relays = midi_following() && n == 14 && msg[0] == 0xf0 && msg[1] == 0x7d && msg[13] == 0xf7;
+    midi_feed_at(&stop, 1, t);
+    int link_ok = joined && exact && worst_ms < 0.25 && stops_with && bar_err < 0.01 && keeps && relays;
+    printf("miditest link sync: joins mid-song %d, the exact tempo %d, the sound within %.3f / %.3f / %.3f / %.3f ms "
+           "of the leader's at 137.37 / 200 / 224.5 / 250 BPM (want under 0.25), stops with it %d; clock only: the "
+           "bar within %.3f steps, keeps playing %d; passes the clock on %d: %d\n",
+           joined, exact, worst_at[0], worst_at[1], worst_at[2], worst_at[3], stops_with, bar_err, keeps, relays,
+           link_ok);
+
+    /* the follower's USB descriptors, and the leader finding a linked Brick in a stand-in sysfs (not the
+     * memory stick with the same ids) */
+    uint8_t d[256];
+    int dn = link_descriptors(d, sizeof d), sn = link_strings(d + 128, 128);
+    int desc = dn == 52 && d[0] == 3 && d[20 + 5] == 0xff && d[20 + 6] == LINK_SUBCLASS && d[20 + 7] == LINK_PROTOCOL &&
+               d[29 + 2] == 0x01 && d[29 + 3] == 2 && d[45 + 4] == 0 && d[45 + 5] == 2 && sn > 16;
+    char fs[] = "/tmp/rs-fakeusb-XXXXXX", fp[600];
+    int found = 0;
+    LinkDev ld[4];
+    if (mkdtemp(fs)) {
+        static const char *const tree[][2] = {
+            {"1-1.3/idVendor", "1d6b"}, {"1-1.3/idProduct", "0104"}, {"1-1.3/busnum", "1"}, {"1-1.3/devnum", "5"},
+            {"1-1.3/1-1.3:1.0/bInterfaceClass", "ff"}, {"1-1.3/1-1.3:1.0/bInterfaceSubClass", "42"},
+            {"1-1.3/1-1.3:1.0/bInterfaceProtocol", "4c"}, {"1-1.3/1-1.3:1.0/ep_02/direction", "out"},
+            {"1-1.3/1-1.3:1.0/ep_02/type", "Bulk"}, {"1-1.3/1-1.3:1.0/ep_02/bEndpointAddress", "02"},
+            {"1-1.4/idVendor", "1d6b"}, {"1-1.4/idProduct", "0104"}, {"1-1.4/busnum", "1"}, {"1-1.4/devnum", "6"},
+            {"1-1.4/1-1.4:1.0/bInterfaceClass", "08"},
+        };
+        for (size_t k = 0; k < sizeof tree / sizeof tree[0]; k++) {
+            snprintf(fp, sizeof fp, "%s/%s", fs, tree[k][0]);
+            for (char *c = fp + strlen(fs) + 1; *c; c++)
+                if (*c == '/') {
+                    *c = 0;
+                    mkdir(fp, 0755);
+                    *c = '/';
+                }
+            FILE *f = fopen(fp, "w");
+            if (f) {
+                fprintf(f, "%s\n", tree[k][1]);
+                fclose(f);
+            }
+        }
+        found = link_find(fs, ld, 4);
+        char rm[700];
+        snprintf(rm, sizeof rm, "rm -rf %s", fs);
+        if (system(rm) != 0) { /* left in /tmp */ }
+    }
+    int usb_ok = desc && found == 1 && ld[0].bus == 1 && ld[0].dev == 5 && ld[0].ep == 0x02;
+    printf("miditest link usb: descriptors %d (%d bytes), a linked Brick found, the memory stick passed over: %d\n",
+           desc, dn, usb_ok);
+    midi_reset();
+    return modes_ok && out_ok && only_ok && tick_ok && link_ok && usb_ok;
+}
+
 /* --miditest: notes play each voice's pitch and give it back, CCs set the settings */
 static int midi_test(void)
 {
@@ -3888,7 +4142,7 @@ static int midi_test(void)
                 synth_get_param(syn, P_B_MUTE) == 1 && !synth_get_param(syn, P_A_MUTE) &&
                 fabsf(synth_get_param(syn, P_B_SIZE) - param_info[P_B_SIZE].min) < 0.01f;
     printf("miditest cc: morph 1, BPM the lowest, B muted, B size the smallest: %d\n", cc_ok);
-    ok = notes_ok && cc_ok;
+    ok = notes_ok && cc_ok && clock_test();
     printf("miditest: %s\n", ok ? "all good" : "FAILED");
     return !ok;
 }
@@ -4162,6 +4416,14 @@ int main(int argc, char **argv)
             for (int r = 0; r < n; r++)
                 if (rows[r] == P_OUTPUT) ui.sel[TAB_RHYTHM] = r;
         }
+        if (!strcmp(shot_view, "midi")) { /* RHYTHM at MIDI CLOCK */
+            int rows[256];
+            const char *hdrs[256];
+            int n = build_rows(TAB_RHYTHM, rows, hdrs);
+            ui.tab = TAB_RHYTHM;
+            for (int r = 0; r < n; r++)
+                if (rows[r] == P_MIDI) ui.sel[TAB_RHYTHM] = r;
+        }
         if (!strcmp(shot_view, "engine")) ui.tab = TAB_ENGINE;
         if (!strcmp(shot_view, "mod")) ui.tab = TAB_MOD;
         if (!strcmp(shot_view, "mix")) ui.tab = TAB_MIX;
@@ -4213,7 +4475,12 @@ int main(int argc, char **argv)
     fprintf(stderr, "radioscan v" RS_VERSION ": update check %s, from %s\n", update_auto ? "on" : "off", update_asset());
     fprintf(stderr, "radioscan: audio %s at %d Hz, %d frames/buffer\n", audio_ok ? "open" : "FAILED", audio_rate, buffer);
     ui.running = 1;
+    midi_set_clock(&midi_clock);
+    /* the clock out leaves as the sound is heard: the audio clock, else the device's buffer behind the synth */
+    midi_set_latency((float)buffer / audio_rate);
     midi_start();
+    if (!getenv("RS_MIDI") || atoi(getenv("RS_MIDI")) != 0)
+        link_follow_start(); /* the bottom port as a clock link: a Brick with a hub can lead this one (link.h) */
     perf_log("START", "running after %.2f s", (perf_now_us() - ev_t0) / 1e6);
     ev("start (event times are seconds since the app started, as the performance log's)");
     while (ui.running && !got_signal) {
@@ -4237,6 +4504,7 @@ int main(int argc, char **argv)
     ev_flush();
     ringleds_close();
     perf_close();
+    link_follow_stop(); /* the bottom port given back */
     midi_stop();
     sync_close();
     save_settings();

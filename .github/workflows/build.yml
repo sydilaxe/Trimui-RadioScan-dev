@@ -200,6 +200,13 @@ jobs:
         run: |
           ./build/desktop/radioscan --miditest | tee midi.txt
           grep -q "miditest: all good" midi.txt
+          # the MIDI clock's modes, the tight clock in, and the Brick clock link (USB gadget follower, usbfs leader)
+          grep -q "^miditest modes .*: 1$" midi.txt
+          grep -q "^miditest clock out: .*: 1$" midi.txt
+          grep -q "^miditest clock only: .*: 1$" midi.txt
+          grep -q "^miditest clock in at 250 BPM: .*: 1$" midi.txt
+          grep -q "^miditest link sync: .*: 1$" midi.txt
+          grep -q "^miditest link usb: .*: 1$" midi.txt
           ./build/desktop/radioscan --midi-chart > cc.md
           sed -n '/<!-- cc table -->/,/<!-- end cc table -->/p' docs/MIDI.md | sed '1d;$d' | diff cc.md -
 
