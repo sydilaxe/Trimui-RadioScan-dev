@@ -1,16 +1,16 @@
 # AGENTS.md
 
 RadioScan is a two-voice internet-radio synthesizer for the TrimUI Brick, Brick Hammer and Brick Pro running
-TrimUI OS or MustardOS (Allwinner A133P: four Cortex-A53 cores, 1 GB, a 1024x768 screen), ported from the Miyoo Mini Plus
+MustardOS (Allwinner A133P: four Cortex-A53 cores, 1 GB, a 1024x768 screen), ported from the Miyoo Mini Plus
 version (sydilaxe/Miyoo-RadioScan-dev) the way Columbia Street and Jaffedrone were
 (sydilaxe/Trimui-Columbiastreet-dev, sydilaxe/Trimui-Jaffedrone-dev).
 
 `make` cross-compiles `build/trimui/radioscan` with zig (aarch64, glibc 2.28) against a stand-in for the device's
 SDL2 (`tools/mksdlstub.py`; the headers are in `third_party/SDL2-2.30.9-headers`). `make package` zips it as
-`build/RadioScan-trimui.zip` holding `Apps/RadioScan`, and as `build/RadioScan-mustardos.muxapp` holding
-`RadioScan/` plus `mustardos/` (`mux_launch.sh`; `wake_screen.sh`, run through `RS_SCREEN_WAKE` once the window is
-up, as the Brick Pro's screen can stay dark on MustardOS; the list glyph). One build serves all three devices and
-both firmwares. `make desktop` builds
+`build/RadioScan-mustardos.muxapp`, the only package built, holding the app folder (`Apps/RadioScan` in this repo)
+as `RadioScan/` plus `mustardos/` (`mux_launch.sh`; `wake_screen.sh`, run through `RS_SCREEN_WAKE` once the window is
+up, as the Brick Pro's screen can stay dark on MustardOS; the list glyph). One build serves all three devices. Only
+MustardOS is built for: no TrimUI OS or Knulli packages. `make desktop` builds
 for this computer against the system SDL2; CI runs its tests (`.github/workflows/build.yml`). Without zig on the
 path, `pip install ziglang==0.14.1`.
 
@@ -21,8 +21,7 @@ Brick Pro numbering told apart by the controller's product id, else MustardOS's 
 them); the sound device follows a USB sound card when one is
 plugged in. Everything else (the synth in `src/dsp.c`, streams, stations, Wi-Fi sync, the updater) is shared with
 the Miyoo version: keep it the same so changes can be carried across in either direction. The updater differs in
-one place: it picks the release file (`RadioScan-trimui.zip`, or `RadioScan-mustardos.muxapp` when the app folder
-has `mux_launch.sh`; keep `mux_launch.sh` out of the TrimUI OS zip).
+one place: it fetches the release file `RadioScan-mustardos.muxapp`.
 
 `src/midi.c` is USB MIDI: notes and CCs for the main thread, and the MIDI clock in and out, run from the MIDI thread
 through the main program's clock (`MidiClock`, the same calls Wi-Fi sync makes). `src/link.c` is the clock link
@@ -38,7 +37,7 @@ Pro's lights. The audio callback only calls
 
 When you change a control or a screen, update the README's Controls section and the footer hints in `src/main.c`.
 When you change the input code, keep `radioscan --joytest` passing (it covers MustardOS's numbering too). When you change the updater or the package
-layout, run the self-update test from the workflow (it serves a zip with `tools/fake_github.py`).
+layout, run the self-update test from the workflow (it serves the .muxapp with `tools/fake_github.py`).
 
 The app updates itself from the latest GitHub release of this repo (`src/update.c`, HTTPS through the Mbed TLS in
 `third_party/mbedtls`). Releases are built as the version in their tag (`make VERSION=x.y.z`); `RS_VERSION` in

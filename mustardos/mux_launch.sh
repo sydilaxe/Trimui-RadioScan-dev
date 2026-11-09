@@ -4,9 +4,7 @@
 # GRID: RadioScan
 
 # MustardOS starts an app with this script, passing the app's folder. It sets up
-# the app the way MustardOS's own apps do, then runs launch.sh, which is shared
-# with the TrimUI OS package. The app sees this file and so updates itself from
-# the MustardOS package.
+# the app the way MustardOS's own apps do, then runs launch.sh.
 
 APP_DIR="${1:-$(dirname "$0")}"
 

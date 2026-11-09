@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Local stand-in for GitHub's releases, for testing RadioScan's self-update without the internet.
 
-Serves DIR/RadioScan-trimui.zip (or each --asset, which can be given more than once) as the assets
+Serves DIR/RadioScan-mustardos.muxapp (or each --asset, which can be given more than once) as the assets
 of a release tagged TAG, the way GitHub does: the API's latest-release JSON, then a download link
 that redirects (with a ~1000-character signed URL) to the file itself.
 
@@ -23,7 +23,7 @@ def main():
     ap.add_argument("--tag", default="v9.9.9")
     ap.add_argument("--asset", action="append")
     args = ap.parse_args()
-    assets = args.asset or ["RadioScan-trimui.zip"]
+    assets = args.asset or ["RadioScan-mustardos.muxapp"]
     base = f"http://127.0.0.1:{args.port}"
 
     class Handler(BaseHTTPRequestHandler):
