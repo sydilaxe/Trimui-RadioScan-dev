@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A stand-in libSDL2-2.0.so.0 to link the TrimUI build against: every SDL
 function the sources call, as an empty function. The device's own SDL2
-(TrimUI OS ships it) is the one loaded at run time; this only gives the
+(MustardOS ships it) is the one loaded at run time; this only gives the
 linker the names and the library's soname.
 
 usage: mksdlstub.py OUT.c SOURCE.c ...

@@ -16,7 +16,7 @@ path, `pip install ziglang==0.14.1`.
 
 The platform layer lives in `src/main.c` (the screen, input and sound device sections and `main`): the 640x480
 pages are drawn into a software surface as on the Miyoo and scaled to the screen with an SDL2 renderer; the TrimUI's
-buttons come in as a joystick, TrimUI OS's or MustardOS's "muOS-Keys" one, found at run time, with the Brick or
+buttons come in as MustardOS's "muOS-Keys" joystick (any other controller is ignored), with the Brick or
 Brick Pro numbering told apart by the controller's product id, else MustardOS's board name (`RS_JOYMAP` remaps
 them); the sound device follows a USB sound card when one is
 plugged in. Everything else (the synth in `src/dsp.c`, streams, stations, Wi-Fi sync, the updater) is shared with

@@ -1,6 +1,6 @@
 #!/bin/sh
 # A report of the system, for troubleshooting and tuning the app on a TrimUI Brick, Brick Hammer
-# or Brick Pro (TrimUI OS or MustardOS): the firmware and board, the processor, memory, the sound
+# or Brick Pro under MustardOS: the firmware and board, the processor, memory, the sound
 # cards, USB and input devices and what is running at start, then a sample every 10 s while the
 # app runs (up to an hour): the system load, the processor's clock and temperature, and the
 # busiest processes. Written to sysinfo.txt in the app folder; the app's own figures (audio load,
@@ -24,16 +24,10 @@ fi
 
 {
     echo "== $name start $(date)"
-    if [ -d /opt/muos ]; then
-        echo "firmware: MustardOS $(cat /opt/muos/config/system/version 2>/dev/null)" \
-            "$(cat /opt/muos/config/version.txt 2>/dev/null | head -n 2 | tr '\n' ' ')"
-        echo "board: $(cat /opt/muos/device/config/board/name 2>/dev/null)"
-    else
-        echo "firmware: TrimUI OS $(cat /etc/version 2>/dev/null) $(cat /usr/trimui/version 2>/dev/null)"
-    fi
-    echo "DEVICE=$DEVICE TRIMUI_MODEL=$TRIMUI_MODEL"
-    echo "build: $(cat DEVICE 2>/dev/null || echo "one for every device") v$(cat VERSION 2>/dev/null)," \
-        "$([ -f mux_launch.sh ] && echo "MustardOS package" || echo "TrimUI OS package")"
+    echo "firmware: MustardOS $(cat /opt/muos/config/system/version 2>/dev/null)" \
+        "$(cat /opt/muos/config/version.txt 2>/dev/null | head -n 2 | tr '\n' ' ')"
+    echo "board: $(cat /opt/muos/device/config/board/name 2>/dev/null)"
+    echo "build: $(cat DEVICE 2>/dev/null || echo "one for every device") v$(cat VERSION 2>/dev/null)"
     uname -a
     grep -i "processor\|model name\|bogomips\|hardware\|features" /proc/cpuinfo
     echo "cores online: $(cat $CPU/online)"
@@ -51,7 +45,7 @@ fi
     echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR PIPEWIRE_RUNTIME_DIR=$PIPEWIRE_RUNTIME_DIR" \
         "SDL_AUDIODRIVER=$SDL_AUDIODRIVER ALSA_CONFIG=$ALSA_CONFIG PIPEWIRE_LATENCY=$PIPEWIRE_LATENCY"
     echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
-    ls -l /usr/lib/libSDL2* /usr/trimui/lib/libSDL2* /opt/muos/frontend/lib/libSDL2* 2>/dev/null
+    ls -l /usr/lib/libSDL2* /opt/muos/frontend/lib/libSDL2* 2>/dev/null
     if command -v wpctl >/dev/null 2>&1; then
         echo "-- sound: PipeWire"
         XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run} wpctl status 2>&1 | head -n 60
