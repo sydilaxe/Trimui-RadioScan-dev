@@ -18,8 +18,8 @@ env:
   RELEASE_TAG: ${{ inputs.release_tag || github.event.release.tag_name || (startsWith(github.ref, 'refs/tags/v') && github.ref_name) || '' }}
 
 jobs:
-  trimui:
-    name: TrimUI packages (Brick, Brick Hammer, Brick Pro; TrimUI OS and MustardOS)
+  mustardos:
+    name: MustardOS package (Brick, Brick Hammer, Brick Pro)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,28 +42,19 @@ jobs:
           for s in Apps/RadioScan/launch.sh Apps/RadioScan/sysinfo.sh mustardos/*.sh; do sh -n "$s"; done
           bash -n install.sh
           make -j"$(nproc)" package "$@"
-          z=build/RadioScan-trimui.zip
-          ls -l $z
-          unzip -l $z | grep -q "Apps/RadioScan/radioscan$"
-          unzip -l $z | grep -q "Apps/RadioScan/launch.sh$"
-          unzip -l $z | grep -q "Apps/RadioScan/config.json$"
-          unzip -l $z | grep -q "Apps/RadioScan/sysinfo.sh$"
-          # the self-updater needs the CA bundle for HTTPS, and VERSION for install.sh
-          unzip -l $z | grep -q "Apps/RadioScan/cacert.pem$"
-          test "$(unzip -p $z Apps/RadioScan/VERSION)" = "$(make -s version "$@")"
           file build/trimui/radioscan | grep -q "ARM aarch64"
-          # runs on TrimUI OS: its own SDL2, and nothing newer than glibc 2.28
+          # runs on the device's own SDL2, and nothing newer than glibc 2.28
           readelf -d build/trimui/radioscan | grep -q "libSDL2-2.0.so.0"
           # (a bare "! cmd" can't fail a step under set -e, hence the ifs)
           if objdump -T build/trimui/radioscan | grep -o "GLIBC_[0-9.]*" | sort -uV | awk -F'[_.]' '$2 > 2 || ($2 == 2 && $3 > 28)' | grep .; then
             echo "::error::the binary needs a glibc newer than 2.28"; exit 1
           fi
-          strings build/trimui/radioscan | grep -qx "/RadioScan-trimui.zip"
           strings build/trimui/radioscan | grep -qx "/RadioScan-mustardos.muxapp"
-          # MustardOS: the same app folder in "RadioScan/", with mux_launch.sh, wake_screen.sh and the list glyph
+          # the app folder in "RadioScan/", with mux_launch.sh, wake_screen.sh and the list glyph
+          # (the self-updater needs the CA bundle for HTTPS, and VERSION for install.sh)
           m=build/RadioScan-mustardos.muxapp
           ls -l $m
-          for f in radioscan launch.sh mux_launch.sh wake_screen.sh sysinfo.sh glyph/radioscan.svg cacert.pem stations.txt; do
+          for f in radioscan launch.sh config.json mux_launch.sh wake_screen.sh sysinfo.sh glyph/radioscan.svg cacert.pem stations.txt; do
             unzip -l $m | grep -q "RadioScan/$f$" || { echo "::error::$m has no $f"; exit 1; }
           done
           test "$(unzip -p $m RadioScan/VERSION)" = "$(make -s version "$@")"
@@ -71,20 +62,17 @@ jobs:
           # MustardOS's Archive Manager refuses absolute and .. paths, and anything not a file or folder
           if unzip -Z1 $m | grep -Eq '^/|(^|/)\.\.(/|$)|\\'; then echo "::error::$m has unsafe paths"; exit 1; fi
           if unzip -Zl $m | grep -Eq '^[bclps]'; then echo "::error::$m has links or devices"; exit 1; fi
-          # the TrimUI OS zip must not carry mux_launch.sh: it is how the app tells the packages apart
-          if unzip -l $z | grep -q mux_launch.sh; then echo "::error::$z has mux_launch.sh"; exit 1; fi
       - uses: actions/upload-artifact@v4
         with:
-          name: RadioScan-trimui
+          name: RadioScan-mustardos
           path: |
-            build/RadioScan-trimui.zip
             build/RadioScan-mustardos.muxapp
 
   release:
     name: Publish release
     # runs for: a pushed v* tag, a release created on the website, or a manual run with a tag filled in
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release' || inputs.release_tag != ''
-    needs: [trimui, desktop]
+    needs: [mustardos, desktop]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -92,25 +80,23 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: RadioScan-trimui
+          name: RadioScan-mustardos
       - name: Check the package was built as this version
         env:
           TAG: ${{ env.RELEASE_TAG }}
         run: |
           # the app compares the release tag with the version it was built as; a mismatch would offer the update forever
-          v=$(unzip -p RadioScan-trimui.zip Apps/RadioScan/VERSION)
-          [ "$TAG" = "v$v" ] || { echo "::error::tag $TAG doesn't match the package's version $v"; exit 1; }
           v=$(unzip -p RadioScan-mustardos.muxapp RadioScan/VERSION)
           [ "$TAG" = "v$v" ] || { echo "::error::tag $TAG doesn't match the MustardOS package's version $v"; exit 1; }
-      - name: Create GitHub release with the TrimUI OS and MustardOS packages
+      - name: Create GitHub release with the MustardOS package
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ env.RELEASE_TAG }}
         run: |
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" RadioScan-trimui.zip RadioScan-mustardos.muxapp --repo "$GITHUB_REPOSITORY" --clobber
+            gh release upload "$TAG" RadioScan-mustardos.muxapp --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$TAG" RadioScan-trimui.zip RadioScan-mustardos.muxapp \
+            gh release create "$TAG" RadioScan-mustardos.muxapp \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "RadioScan $TAG" \
@@ -160,31 +146,22 @@ jobs:
           RS_FAST=1 RADIOSCAN_DIR=w ./build/desktop/radioscan --render 0.2 w/out.wav 2>&1 | grep -q "OSC A: Not a WAV file"
       - name: Self-update test against a local fake GitHub
         run: |
-          mkdir -p rel/Apps/RadioScan && cp -r Apps/RadioScan/. rel/Apps/RadioScan/ && cp build/desktop/radioscan rel/Apps/RadioScan/
-          echo 9.9.9 > rel/Apps/RadioScan/VERSION
-          (cd rel && zip -qr RadioScan-trimui.zip Apps)
-          # the MustardOS package: the same files in "RadioScan/", plus mux_launch.sh and a launch.sh of its own
-          mkdir -p rel/mux/RadioScan && cp -r rel/Apps/RadioScan/. rel/mux/RadioScan/ && cp mustardos/mux_launch.sh rel/mux/RadioScan/
-          echo "# the MustardOS package's" >> rel/mux/RadioScan/launch.sh
-          (cd rel/mux && zip -qr ../RadioScan-mustardos.muxapp RadioScan)
-          python3 tools/fake_github.py rel --port 8767 --tag v9.9.9 --asset RadioScan-mustardos.muxapp --asset RadioScan-trimui.zip &
+          # the MustardOS package: the app folder in "RadioScan/", with mux_launch.sh
+          mkdir -p rel/RadioScan && cp -r Apps/RadioScan/. mustardos/mux_launch.sh build/desktop/radioscan rel/RadioScan/
+          echo 9.9.9 > rel/RadioScan/VERSION
+          (cd rel && zip -qr RadioScan-mustardos.muxapp RadioScan)
+          python3 tools/fake_github.py rel --port 8767 --tag v9.9.9 --asset RadioScan-mustardos.muxapp &
           for i in $(seq 1 30); do curl -s -o /dev/null http://127.0.0.1:8767/latest.json && break; sleep 1; done
-          mkdir -p u && cp Apps/RadioScan/cacert.pem u/ && echo 'Mine|http://example.com/mine|music' > u/stations.txt
+          mkdir -p u && cp Apps/RadioScan/cacert.pem mustardos/mux_launch.sh u/ && echo 'Mine|http://example.com/mine|music' > u/stations.txt
           RS_UPDATE_API=http://127.0.0.1:8767/latest.json RADIOSCAN_DIR=u ./build/desktop/radioscan --update
-          cmp u/radioscan rel/Apps/RadioScan/radioscan
-          cmp u/launch.sh rel/Apps/RadioScan/launch.sh
-          cmp u/wav/README.txt rel/Apps/RadioScan/wav/README.txt   # files in the wav folder come along too
+          cmp u/radioscan rel/RadioScan/radioscan
+          cmp u/launch.sh rel/RadioScan/launch.sh
+          cmp u/mux_launch.sh rel/RadioScan/mux_launch.sh
+          test -x u/mux_launch.sh
+          cmp u/wav/README.txt rel/RadioScan/wav/README.txt   # files in the wav folder come along too
           test "$(cat u/VERSION)" = 9.9.9
           test "$(cat u/stations.txt)" = 'Mine|http://example.com/mine|music'   # the user's stations are kept
           if ls u/*.new 2>/dev/null; then echo "::error::.new files were left behind"; exit 1; fi
-          # a MustardOS install (one with mux_launch.sh) takes the MustardOS package
-          mkdir -p m && cp Apps/RadioScan/cacert.pem mustardos/mux_launch.sh m/ && echo 'Mine|http://example.com/mine|music' > m/stations.txt
-          RS_UPDATE_API=http://127.0.0.1:8767/latest.json RADIOSCAN_DIR=m ./build/desktop/radioscan --update
-          cmp m/launch.sh rel/mux/RadioScan/launch.sh
-          cmp m/radioscan rel/Apps/RadioScan/radioscan
-          test -x m/mux_launch.sh
-          test "$(cat m/stations.txt)" = 'Mine|http://example.com/mine|music'
-          cmp u/launch.sh rel/Apps/RadioScan/launch.sh   # and the TrimUI OS install didn't
       - name: Wi-Fi sync test (two units on this machine)
         run: |
           ./build/desktop/radioscan --synctest LEAD 97 6 > lead.txt &

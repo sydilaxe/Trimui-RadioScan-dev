@@ -4275,7 +4275,6 @@ static int led_test(const char *out)
 int main(int argc, char **argv)
 {
     resolve_paths();
-    update_detect_package(app_dir); /* TrimUI OS's zip, or MustardOS's .muxapp */
     if (argc >= 4 && !strcmp(argv[1], "--render")) return offline_render(argc, argv);
     if (argc >= 2 && !strcmp(argv[1], "--syncsim")) return sync_sim();
     if (argc >= 2 && !strcmp(argv[1], "--midi-chart")) return midi_chart();

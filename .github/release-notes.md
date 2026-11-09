@@ -1,20 +1,19 @@
-RadioScan, an internet-radio synthesizer for the TrimUI Brick, Brick Hammer and Brick Pro (TrimUI OS and MustardOS).
+RadioScan, an internet-radio synthesizer for the TrimUI Brick, Brick Hammer and Brick Pro running MustardOS.
 
 **Install on MustardOS**
 
 Copy `RadioScan-mustardos.muxapp` into the `ARCHIVE` folder of the first SD card, install it from **Applications →
-Archive Manager**, turn Wi-Fi on, then open **Applications → RadioScan**. Press MENU twice to quit.
+Archive Manager**, turn Wi-Fi on, then open **Applications → RadioScan**. Press MENU twice to quit. The package works on all three devices.
 
-**Install on TrimUI OS**
-
-Unzip `RadioScan-trimui.zip` at the root of the SD card (it contains `Apps/RadioScan/`), turn Wi-Fi on, then open
-**Apps → RadioScan**. Press MENU twice to quit. Each package works on all three devices.
-
-Or, on either firmware, with the TrimUI's SSH server on, run this on a computer on the same network:
+Or, with the TrimUI's SSH server on, run this on a computer on the same network:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/sydilaxe/Trimui-RadioScan-dev/main/install.sh | bash
 ```
+
+**Change: MustardOS only**
+- RadioScan is now built only for MustardOS. `RadioScan-trimui.zip` is no longer released; a copy installed from it
+  won't find its update, so install the `.muxapp` instead.
 
 RadioScan checks for new releases when it starts and offers to update itself.
 
@@ -44,7 +43,7 @@ RadioScan checks for new releases when it starts and offers to update itself.
 
 **New: MustardOS, and logs for tuning**
 - A package for MustardOS on the Brick, Brick Hammer and Brick Pro, installed from the Archive Manager. RadioScan
-  reads MustardOS's controller, so every button (and the Brick Pro's stick) works as on TrimUI OS, and it updates
+  reads MustardOS's controller, so every button (and the Brick Pro's stick) works, and it updates
   itself from the MustardOS package.
 - The screen no longer stays dark on a Brick Pro under MustardOS.
 - `log.txt` now has a performance line every 10 s (audio load, dropouts, the screen, the processor's clock and
@@ -72,6 +71,6 @@ every 10 s the audio load, dropouts and the processor's state, with hints) and `
 - Buttons in the wrong place: `export RS_JOYMAP=A=1,B=0` (`log.txt` names any button it doesn't know).
 
 MP3 streams only (AAC, Ogg and HLS stations are skipped). Your own `.wav` files can be voices too: put them in
-`Apps/RadioScan/wav/`. Some preset station URLs may have changed; replace them from the RADIO page.
+`wav/` in the app folder. Some preset station URLs may have changed; replace them from the RADIO page.
 
 See the README for controls and features.

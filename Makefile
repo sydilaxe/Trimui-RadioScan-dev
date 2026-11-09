@@ -1,11 +1,9 @@
-# RadioScan build — TrimUI Brick, Brick Hammer and Brick Pro (TrimUI OS and MustardOS)
+# RadioScan build — TrimUI Brick, Brick Hammer and Brick Pro, running MustardOS
 #   make                 cross-compile for the TrimUI with zig (aarch64, glibc 2.28, against the device's SDL2)
 #                        -> build/trimui/radioscan
 #   make desktop         a build for this computer (needs the SDL2 dev files) -> build/desktop/radioscan
-#   make package         the TrimUI build + build/RadioScan-trimui.zip, to unzip at the root of the SD card
-#                        (it holds Apps/RadioScan), and build/RadioScan-mustardos.muxapp for MustardOS
-#                        (the same binary)
-#   make install SD=/path/to/card [OS=mustardos]   copy the app onto a mounted TrimUI card
+#   make package         the TrimUI build + build/RadioScan-mustardos.muxapp, the MustardOS application archive
+#   make install SD=/path/to/card   copy the app onto a mounted MustardOS card (MUOS/application/RadioScan)
 #   make version         print the version: RS_VERSION in src/update.h, or VERSION=x.y.z when given
 #                        (CI passes the release tag's version, so a release is built as v<tag>)
 #
@@ -48,7 +46,7 @@ build/trimui/libmbedtls.a: $(DEV_MBED)
 build/trimui/mbedtls/%.o: $(MBED_DIR)/library/%.c | build/trimui/mbedtls
 	$(DEV_CC) $(MBED_CFLAGS) -c -o $@ $<
 
-# a stand-in for the device's libSDL2-2.0.so.0, to link against (TrimUI OS has the real one)
+# a stand-in for the device's libSDL2-2.0.so.0, to link against (the device has the real one)
 build/sdl2/libSDL2-2.0.so.0: tools/mksdlstub.py src/main.c
 	@mkdir -p build/sdl2
 	python3 tools/mksdlstub.py build/sdl2/sdl2_stub.c src/main.c
@@ -78,48 +76,33 @@ build/desktop/mbedtls/%.o: $(MBED_DIR)/library/%.c | build/desktop/mbedtls
 build/trimui build/trimui/mbedtls build/desktop build/desktop/mbedtls:
 	mkdir -p $@
 
-# --- the SD card package: Apps/RadioScan, as TrimUI OS lists apps
-package: build/RadioScan-trimui.zip build/RadioScan-mustardos.muxapp
+# --- the package. MustardOS: a .muxapp is a zip that its Archive Manager unpacks into the application folder
+# (MUOS/application on the card), and the folder's name is the name in the Applications list. The app folder
+# (Apps/RadioScan in this repo) and binary, plus mux_launch.sh (how MustardOS starts an app), wake_screen.sh (the
+# Brick Pro's screen can stay dark otherwise) and the list glyph.
+package: build/RadioScan-mustardos.muxapp
 
-build/RadioScan-trimui.zip: build/trimui/$(APP) $(shell find $(APPDIR) -type f)
-	rm -rf build/sd $@
-	mkdir -p build/sd/Apps
-	cp -r $(APPDIR) build/sd/Apps/
-	rm -f build/sd/$(APPDIR)/settings.cfg build/sd/$(APPDIR)/log.txt build/sd/$(APPDIR)/sysinfo.txt build/sd/$(APPDIR)/$(APP)
-	cp build/trimui/$(APP) build/sd/$(APPDIR)/$(APP)
-	cp $(MBED_DIR)/LICENSE build/sd/$(APPDIR)/LICENSE-mbedtls.txt
-	echo $(VERSION) > build/sd/$(APPDIR)/VERSION # read by install.sh to tell whether the TrimUI is up to date
-	chmod +x build/sd/$(APPDIR)/launch.sh build/sd/$(APPDIR)/sysinfo.sh build/sd/$(APPDIR)/$(APP)
-	cd build/sd && zip -qr ../RadioScan-trimui.zip Apps
-	@echo "$@ ready: unzip it at the root of the TrimUI's SD card"
-
-# MustardOS: a .muxapp is a zip that its Archive Manager unpacks into the application folder (MUOS/application on
-# the card), and the folder's name is the name in the Applications list. The same app folder and binary, plus
-# mux_launch.sh (how MustardOS starts an app, and how the app knows to update from this package), wake_screen.sh
-# (the Brick Pro's screen can stay dark otherwise) and the list glyph. Keep mux_launch.sh out of the TrimUI OS zip.
 MUX := mustardos
-build/RadioScan-mustardos.muxapp: build/RadioScan-trimui.zip $(shell find $(MUX) -type f)
+build/RadioScan-mustardos.muxapp: build/trimui/$(APP) $(shell find $(APPDIR) $(MUX) -type f)
 	rm -rf build/mux $@
 	mkdir -p build/mux/RadioScan
-	cp -r build/sd/$(APPDIR)/. build/mux/RadioScan/
+	cp -r $(APPDIR)/. build/mux/RadioScan/
 	cp -r $(MUX)/. build/mux/RadioScan/
-	chmod +x build/mux/RadioScan/mux_launch.sh build/mux/RadioScan/wake_screen.sh
+	rm -f build/mux/RadioScan/settings.cfg build/mux/RadioScan/log.txt build/mux/RadioScan/sysinfo.txt
+	cp build/trimui/$(APP) build/mux/RadioScan/$(APP)
+	cp $(MBED_DIR)/LICENSE build/mux/RadioScan/LICENSE-mbedtls.txt
+	echo $(VERSION) > build/mux/RadioScan/VERSION # read by install.sh to tell whether the TrimUI is up to date
+	chmod +x build/mux/RadioScan/launch.sh build/mux/RadioScan/sysinfo.sh build/mux/RadioScan/$(APP) \
+		build/mux/RadioScan/mux_launch.sh build/mux/RadioScan/wake_screen.sh
 	cd build/mux && zip -qr ../RadioScan-mustardos.muxapp RadioScan
 	@echo "$@ ready: copy it into ARCHIVE on the MustardOS card and install it from the Archive Manager"
 
-OS ?= trimui
-ifeq ($(OS),mustardos)
 INSTALL_DIR = $(SD)/MUOS/application/RadioScan
 INSTALL_ROOT = $(SD)/MUOS
 INSTALL_FROM = build/mux/RadioScan
-else
-INSTALL_DIR = $(SD)/$(APPDIR)
-INSTALL_ROOT = $(SD)/Apps
-INSTALL_FROM = build/sd/$(APPDIR)
-endif
 install: package
-	@test -n "$(SD)" || (echo "usage: make install SD=/path/to/mounted/sdcard [OS=mustardos]" && exit 1)
-	@test -d "$(INSTALL_ROOT)" || (echo "$(INSTALL_ROOT) not found - is this the $(OS) card?" && exit 1)
+	@test -n "$(SD)" || (echo "usage: make install SD=/path/to/mounted/sdcard" && exit 1)
+	@test -d "$(INSTALL_ROOT)" || (echo "$(INSTALL_ROOT) not found - is this the MustardOS card?" && exit 1)
 	mkdir -p "$(INSTALL_DIR)"
 	cp -r $(INSTALL_FROM)/. "$(INSTALL_DIR)/"
 	sync

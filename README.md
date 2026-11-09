@@ -1,6 +1,6 @@
 # RadioScan
 
-A rhythm instrument for the **TrimUI Brick**, **Brick Hammer** and **Brick Pro** (TrimUI OS or
+A rhythm instrument for the **TrimUI Brick**, **Brick Hammer** and **Brick Pro** (running
 [MustardOS](https://muos.dev)) played with **internet radio** (or your own
 **.wav files**). Two stations become two voices. Each voice is opened and closed by its own Euclidean rhythm, the two can
 cross-modulate each other (vocode, FM, ring mod, spectral morph), and the result runs through a filter,
@@ -91,7 +91,7 @@ station lists from the Miyoo load as they are.
 
   HTTPS works through a built-in mbedTLS, along with ICY song titles, redirects and `.pls` / `.m3u` playlists.
 - **WAV files.** A `.wav` file can stand in for a radio station on either voice. Copy files into the app's `wav`
-  folder (`Apps/RadioScan/wav/`) and they join the station list the next time RadioScan starts, named after the file
+  folder (`MUOS/application/RadioScan/wav/`) and they join the station list the next time RadioScan starts, named after the file
   (kind: sound). Pick one on the RADIO page with A or B like any station; a voice can play a station and the other a
   file, or both files. A file plays looped and goes through the same engines, rhythms, cross-modulation and effects,
   and radio scan can land on it. Files elsewhere on the card can be listed in `stations.txt` as `file://wav/name.wav`
@@ -141,20 +141,11 @@ and the five stages, with the stage you're editing ringed.
 
 ## Install
 
-Each release has one package for each firmware, and each works on the Brick, Brick Hammer and Brick Pro:
-`RadioScan-trimui.zip` for TrimUI OS and `RadioScan-mustardos.muxapp` for MustardOS.
+RadioScan is built only for MustardOS. Each release has one package, `RadioScan-mustardos.muxapp`, which works on
+the Brick, Brick Hammer and Brick Pro.
 
-### TrimUI OS
-
-1. Download `RadioScan-trimui.zip` from the latest [Release](../../releases) (or the `RadioScan-trimui` artifact
-   of an [Actions build](../../actions)).
-2. Unzip it at the root of the SD card. It holds `Apps/RadioScan/`, so you end up with
-   `/mnt/SDCARD/Apps/RadioScan/launch.sh`.
-3. Turn Wi-Fi on in TrimUI OS, then open **Apps → RadioScan**. Press MENU twice to quit.
-
-### MustardOS
-
-1. Download `RadioScan-mustardos.muxapp` from the latest [Release](../../releases).
+1. Download `RadioScan-mustardos.muxapp` from the latest [Release](../../releases) (or the `RadioScan-mustardos`
+   artifact of an [Actions build](../../actions)).
 2. Copy it into the `ARCHIVE` folder at the root of the first SD card (SD1).
 3. On the device, open **Applications → Archive Manager** and install it. It lands in
    `MUOS/application/RadioScan` (on SD2 if you have one, else SD1).
@@ -179,7 +170,7 @@ curl -fsSL https://raw.githubusercontent.com/sydilaxe/Trimui-RadioScan-dev/main/
 
 The script finds the TrimUI by scanning the local /24 for an SSH server (dropbear first). It checks the installed
 version against the latest [release](../../releases), and if the release is newer it copies it to
-`SD:/Apps/RadioScan`, or on MustardOS (which it tells apart by itself) to its application folder. Your
+MustardOS's application folder. Your
 `stations.txt` and `settings.cfg` are kept. Run it again any time to update. The address
 that worked is saved in `~/.config/radioscan-trimui/host`. To skip the scan, set `RS_HOST`:
 
@@ -190,14 +181,14 @@ curl -fsSL https://raw.githubusercontent.com/sydilaxe/Trimui-RadioScan-dev/main/
 `RS_USER` changes the SSH user (`root` by default). `RS_FORCE=1` reinstalls even when the version matches. Quit
 RadioScan on the TrimUI before updating.
 
-With the card mounted on a computer, `make install SD=/path/to/card` copies the built app into `Apps/`
-(`OS=mustardos`: into `MUOS/application/`).
+With the card mounted on a computer, `make install SD=/path/to/card` copies the built app into
+`MUOS/application/`.
 
 ### Updating from the TrimUI
 
 Once it's installed, RadioScan keeps itself up to date. A few seconds after it starts, it asks GitHub for the
 latest release (retrying each minute, up to five times, while Wi-Fi comes up). When there's a newer one it asks
-**A update and restart / B not now**. A downloads the release's package for this firmware (about 1 MB) while the radio
+**A update and restart / B not now**. A downloads the release's package (about 1 MB) while the radio
 keeps playing, checks every file, swaps them in and starts the new version. Your stations and settings stay as they
 are. If anything goes wrong on the way, nothing is changed. B asks again next time you open the app. `RS_UPDATE=0`
 in `launch.sh` turns the check off. An update replaces `launch.sh`, so set any of its switches again afterwards.
@@ -336,7 +327,7 @@ On the Brick Pro RadioScan drives the lights one by one:
 | under L2, R2 | The beat while the rhythm runs: a flash each quarter note, orange on the bar's first |
 | F1, F2 | Voice A (green) / voice B (amber), as loud as it plays: they pulse with each voice's rhythm, fade with a stop and go dark when the voice is muted or in RAW. A press flashes the button white |
 
-They come on with MustardOS's Brick Pro controller; on TrimUI OS, with the first move of a stick. When RadioScan
+They come on with MustardOS's Brick Pro controller. When RadioScan
 closes the lights go back to how they were. Settings in `launch.sh`: `RS_LEDS=0` leaves the lights alone,
 `RS_LED_BAR=0` keeps the top bar dark, `RS_LED_BRIGHTNESS=1..60` (60 by default).
 
@@ -427,12 +418,12 @@ so. The clock side goes out without dither. Dice and the clean slate leave the o
 ## Building
 
 The TrimUI build is cross-compiled with [zig](https://ziglang.org) for aarch64 against glibc 2.28, linking a
-stand-in for the device's own `libSDL2-2.0.so.0` (TrimUI OS ships the real one), as in the other TrimUI ports:
+stand-in for the device's own `libSDL2-2.0.so.0` (the device has the real one), as in the other TrimUI ports:
 
 ```sh
 pip install ziglang==0.14.1     # or put zig 0.14 on the PATH, or pass ZIG=/path/to/zig
 make package
-# -> build/trimui/radioscan, build/RadioScan-trimui.zip and build/RadioScan-mustardos.muxapp
+# -> build/trimui/radioscan and build/RadioScan-mustardos.muxapp
 ```
 
 Desktop build for development (needs the SDL2 dev files, e.g. `libsdl2-dev`):
@@ -467,7 +458,7 @@ when its folder has `mux_launch.sh` (`mustardos/`), which only that package carr
 
 ### Releasing
 
-Any of these builds, tests and publishes a GitHub Release with `RadioScan-trimui.zip` and
+Any of these builds, tests and publishes a GitHub Release with
 `RadioScan-mustardos.muxapp` attached (notes come from
 `.github/release-notes.md`). The release is built as the version in its tag (`make VERSION=1.2.3`), which the app
 compares with newer release tags, so there's no need to bump the source first. The tag must look like `v1.2.3`.

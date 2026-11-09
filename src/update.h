@@ -1,9 +1,7 @@
 /* Self-update: ask GitHub for the latest release, and if it's newer than this build, download its package and swap
  * the new files into the app folder. stations.txt and settings.cfg stay as they are.
  *
- * The package is the one the app was installed from: RadioScan-trimui.zip for TrimUI OS, and
- * RadioScan-mustardos.muxapp for MustardOS, told apart by the mux_launch.sh that only the MustardOS package has.
- * One build serves the Brick, Brick Hammer and Brick Pro. */
+ * The package is RadioScan-mustardos.muxapp, the MustardOS application archive. One build serves the Brick, Brick Hammer and Brick Pro. */
 #ifndef UPDATE_H
 #define UPDATE_H
 
@@ -15,12 +13,9 @@
 #define RS_VERSION "0.5.0"
 #endif
 #define RS_REPO "sydilaxe/Trimui-RadioScan-dev"
-/* the release files, each with the folder its zip holds the app in */
-#define RS_ASSET "RadioScan-trimui.zip"                /* TrimUI OS */
-#define RS_ZIP_DIR "Apps/RadioScan/"                   /* as TrimUI OS lists apps */
-#define RS_ASSET_MUSTARD "RadioScan-mustardos.muxapp"  /* MustardOS */
-#define RS_ZIP_DIR_MUSTARD "RadioScan/"                /* MustardOS unpacks a .muxapp into its application folder */
-#define RS_MUSTARD_LAUNCHER "mux_launch.sh"            /* only in the MustardOS package */
+/* the release file, and the folder its zip holds the app in */
+#define RS_ASSET "RadioScan-mustardos.muxapp"
+#define RS_ZIP_DIR "RadioScan/" /* MustardOS unpacks a .muxapp into its application folder */
 
 /* exit status that tells launch.sh to start the app again (the new version) */
 #define RELAUNCH_STATUS 75
@@ -45,9 +40,6 @@ typedef struct {
 } UpdateStatus;
 
 const UpdateStatus *update_status(void);
-/* pick the package from what is in app_dir (TrimUI OS unless it has mux_launch.sh); returns 1 for MustardOS.
- * Call before checking. */
-int update_detect_package(const char *app_dir);
 const char *update_asset(void); /* the release file this copy updates from */
 void update_check_start(void);                 /* in the background; state goes CHECKING -> CURRENT / AVAILABLE / CHECK_FAILED */
 void update_install_start(const char *app_dir); /* from AVAILABLE; state goes INSTALLING -> INSTALLED / FAILED */
