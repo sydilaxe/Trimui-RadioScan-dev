@@ -444,17 +444,15 @@ It opens a 1024x768 window, as on the Brick. Keyboard on desktop, the Miyoo's ke
 | R-Ctrl / Enter / Esc | SELECT / START / MENU |
 | F1 / F2 | F1 / F2 |
 
-On the TrimUI the buttons arrive as a joystick: B 0, A 1, Y 2, X 3, L1 4, R1 5, SELECT 6, START 7, MENU 8, the
-d-pad as hat 0, and L2 and R2 as axes 2 and 5 (TrimUI OS, NextUI and MinUI agree). The Brick Pro's left stick
-(axes 0 and 1) sweeps the stations and the right one (axes 3 and 4) plays morph and the filter. MustardOS gives its
-own "muOS-Keys" controller instead, numbered as in its `device/tui-brick*` maps (different on the Brick and the Brick
-Pro, with L2 and R2 as buttons); RadioScan reads it when it is there and ignores the TrimUI's controller underneath.
-If a firmware numbers them differently, `RS_JOYMAP=A=1,B=0,...` in `launch.sh` remaps them; a button RadioScan
-doesn't know is noted in `log.txt` when pressed. F1 and F2 are taken to be the two buttons after MENU: 9 and 10 (15
-and 16 on MustardOS's Brick controller, 16 and 17 on its Brick Pro one), the numbers other firmwares call L3 and R3,
-so on the Brick Pro the stick clicks do F1 and F2; if they turn out different, the log names the button pressed and
-`RS_JOYMAP=F1=..,F2=..` moves them. The same binary goes into both packages; it updates from the MustardOS package
-when its folder has `mux_launch.sh` (`mustardos/`), which only that package carries.
+On the TrimUI the buttons arrive as MustardOS's "muOS-Keys" controller, numbered as in its `device/tui-brick*`
+maps (different on the Brick and the Brick Pro), with the d-pad as hat 0 and L2 and R2 as buttons; RadioScan reads it
+alone and ignores any other controller (the TrimUI's own one underneath it). The Brick Pro's left stick (axes 0
+and 1) sweeps the stations and the right one (axes 2 and 3) plays morph and the filter. If the numbering differs,
+`RS_JOYMAP=A=1,B=0,...` in `launch.sh` remaps it; a button RadioScan doesn't know is noted in `log.txt` when
+pressed. F1 and F2 are taken to be the two buttons after MENU: 15 and 16 on MustardOS's Brick controller, 16 and 17
+on its Brick Pro one (the numbers MustardOS calls L3 and R3, so on the Brick Pro the stick clicks do F1 and F2), and
+on the Brick Pro also 0 and 1, its lit function buttons; if they turn out different, the log names the button
+pressed and `RS_JOYMAP=F1=..,F2=..` moves them.
 
 ### Releasing
 

@@ -3,7 +3,7 @@
  * log.txt (stderr), for troubleshooting and for tuning the audio settings on
  * either device:
  *
- *   SYS    at start: the firmware (TrimUI OS or MustardOS), the board, this
+ *   SYS    at start: MustardOS, the board it names, this
  *          build, the processor's governor and clock range, the memory
  *   STAT   every 10 s (every second at DETAIL): the audio callback's load
  *          (time spent making sound against the time a buffer lasts),

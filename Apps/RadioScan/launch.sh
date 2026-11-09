@@ -11,7 +11,7 @@ for c in 0 1 2 3; do
 done
 echo performance > $CPU/cpu0/cpufreq/scaling_governor 2>/dev/null
 
-export LD_LIBRARY_PATH="/usr/trimui/lib:/usr/lib:$LD_LIBRARY_PATH"
+export LD_LIBRARY_PATH="/usr/lib:$LD_LIBRARY_PATH"
 export RADIOSCAN_DIR="$(pwd)"
 
 # Optional overrides (remove the # to use one):

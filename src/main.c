@@ -1,4 +1,4 @@
-/* RadioScan — a synthesizer for the TrimUI Brick, Brick Hammer and Brick Pro (TrimUI OS or MustardOS) whose sound sources are
+/* RadioScan — a synthesizer for the TrimUI Brick, Brick Hammer and Brick Pro (running MustardOS) whose sound sources are
  * internet radio streams. Ported from the Miyoo Mini Plus version: the same 640x480 pages, drawn into a buffer and
  * scaled to fill the screen through SDL2 (1.6x on the Brick's 1024x768).
  *
@@ -266,7 +266,7 @@ static void audio_cb(void *ud, Uint8 *stream, int len)
     if (!ftz) {
         enable_flush_to_zero();
         /* real-time priority, so a busy moment elsewhere (an SD card write, drawing) can't starve the sound;
-         * TrimUI OS runs apps as root, and where it isn't allowed nothing changes */
+         * MustardOS runs apps as root, and where it isn't allowed nothing changes */
         struct sched_param sp = {.sched_priority = 50};
         aud_rt = !aud_rt_wanted ? 0 : pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp) == 0;
         ftz = 1;
@@ -2706,8 +2706,8 @@ static void rstick_apply(void)
 /* The Brick Pro's lights (ringleds.h): the left stick's ring points with the sweep, green across (voice A), amber up and
  * down (voice B); the right stick's ring with the hand, green toward A and amber toward B across (morph), the river's
  * blue up and down (filter); the top bar the output's level; L1, L2, R1, R2 the beat while the rhythm runs. One build
- * serves every device: the lights come on with MustardOS's Brick Pro controller, a TRIMUI_MODEL naming a Brick Pro, or
- * the first move of a stick (only the Brick Pro has them). */
+ * serves every device: the lights come on with MustardOS's Brick Pro controller, or the first move of a stick (only
+ * the Brick Pro has them). */
 static int leds_state; /* 0 not yet, 1 driven, -1 not here */
 static void leds_try(int brickpro, const char *why)
 {
@@ -2953,7 +2953,7 @@ static void present(void)
 {
     static int frames;
     /* opaque: the page is drawn with the alpha byte left at 0, and SDL copies it to the screen as it is. MustardOS's
-     * display shows the screen's alpha, so a picture with alpha 0 is black there (TrimUI OS ignores it). As in
+     * display shows the screen's alpha, so a picture with alpha 0 is black there (other firmwares ignore it). As in
      * Jaffedrone. */
     for (int y = 0; y < SCREEN_H; y++) {
         Uint32 *row = (Uint32 *)((Uint8 *)screen->pixels + y * screen->pitch);
@@ -3017,32 +3017,28 @@ static int video_init(void)
 }
 
 /* ================================================================== input
- * The buttons, as SDL sees them. The d-pad is hat 0 everywhere.
- *   TrimUI OS (NextUI and MinUI agree): the TrimUI's own controller: B 0, A 1, Y 2, X 3, L1 4, R1 5, SELECT 6,
- *     START 7, MENU 8; L2 and R2 are axes 2 and 5; the Brick Pro's left stick is axes 0, 1.
- *   MustardOS: its "muOS-Keys" controller, numbered as in MustardOS's own controller maps (device/tui-brick*),
- *     which differ between the Brick and the Brick Pro. L2 and R2 are buttons; the Brick Pro's left stick is
- *     axes 0, 1. One build serves both devices, so which one it is comes from the controller (product 2: Brick,
- *     3: Brick Pro), else from the board MustardOS names.
+ * The buttons, as SDL sees them: MustardOS's "muOS-Keys" controller, numbered as in MustardOS's own controller maps
+ * (device/tui-brick*), which differ between the Brick and the Brick Pro. The d-pad is hat 0, L2 and R2 are buttons,
+ * the Brick Pro's sticks are axes 0, 1 and 2, 3. One build serves both devices, so which one it is comes from the
+ * controller (product 2: Brick, 3: Brick Pro), else from the board MustardOS names. Any other controller (the
+ * TrimUI's own one underneath it) is not read, so a press can't arrive twice.
  * The Brick Pro's left stick sweeps the stations (see radio_scan), its right stick plays morph and the filter (see
  * rstick_apply), and its clicks are the buttons after MENU, read as F1 and F2. RS_JOYMAP=A=1,B=0,... sets another firmware's button numbers
  * (for every controller); a button that isn't mapped is noted in log.txt when pressed. As in Columbia Street, HI5
  * and Jaffedrone. */
-enum { PAD_TRIMUI, PAD_MUOS_BRICK, PAD_MUOS_BRICKPRO, PAD_KINDS };
-static const char *const pad_names[PAD_KINDS] = {"TrimUI OS", "MustardOS (Brick)", "MustardOS (Brick Pro)"};
+enum { PAD_MUOS_BRICK, PAD_MUOS_BRICKPRO, PAD_KINDS };
+static const char *const pad_names[PAD_KINDS] = {"MustardOS (Brick)", "MustardOS (Brick Pro)"};
 /* each pad's button numbers, in the order of the B_ enum. F1 and F2 are the two buttons SDL numbers after MENU (L3 and
- * R3 in other firmwares' maps; the Brick has no sticks to click). */
+ * R3 in MustardOS's maps; the Brick has no sticks to click). */
 static const signed char pad_buttons[PAD_KINDS][B_COUNT] = {
     /*                     UP  DN  LT  RT  A  B  X  Y  L1  R1  L2  R2  SEL STA MENU F1  F2 */
-    [PAD_TRIMUI]        = {-1, -1, -1, -1, 1, 0, 3, 2, 4,  5,  -1, -1, 6,  7,  8,   9,  10},
     [PAD_MUOS_BRICK]    = {-1, -1, -1, -1, 5, 4, 6, 7, 8,  9,  10, 11, 12, 13, 14,  15, 16},
     [PAD_MUOS_BRICKPRO] = {-1, -1, -1, -1, 6, 5, 7, 8, 9,  10, 11, 12, 13, 14, 15,  16, 17},
 };
-/* what each pad's axes do */
-enum { AX_NONE, AX_L2, AX_R2, AX_LX, AX_LY, AX_RX, AX_RY };
-#define PAD_AXES 6
+/* what each pad's axes do: the Brick Pro's sticks */
+enum { AX_NONE, AX_LX, AX_LY, AX_RX, AX_RY };
+#define PAD_AXES 4
 static const unsigned char pad_axes[PAD_KINDS][PAD_AXES] = {
-    [PAD_TRIMUI] = {AX_LX, AX_LY, AX_L2, AX_RX, AX_RY, AX_R2},
     [PAD_MUOS_BRICK] = {AX_NONE},
     [PAD_MUOS_BRICKPRO] = {AX_LX, AX_LY, AX_RX, AX_RY},
 };
@@ -3100,11 +3096,12 @@ static int pad_product(SDL_Joystick *j)
 }
 
 /* MustardOS's controller: named muOS-Keys, vendor 0x756d ("mu"); product 2 on the Brick and Brick Hammer, 3 on
- * the Brick Pro. Otherwise the board MustardOS names (tui-brick, tui-brick-pro), else its button count. */
+ * the Brick Pro. Otherwise the board MustardOS names (tui-brick, tui-brick-pro), else its button count. -1 for any
+ * other controller. */
 static int pad_kind(SDL_Joystick *j)
 {
     const char *name = SDL_JoystickName(j);
-    if (!(name && strcasestr(name, "muos")) && pad_vendor(j) != 0x756d) return PAD_TRIMUI;
+    if (!(name && strcasestr(name, "muos")) && pad_vendor(j) != 0x756d) return -1;
     switch (pad_product(j)) {
     case 2: return PAD_MUOS_BRICK;
     case 3: return PAD_MUOS_BRICKPRO;
@@ -3119,17 +3116,12 @@ static int pad_kind(SDL_Joystick *j)
     return SDL_JoystickNumButtons(j) > 17 ? PAD_MUOS_BRICKPRO : PAD_MUOS_BRICK;
 }
 
-/* which map an event uses, or -1 to ignore it: when MustardOS's controller is there, it alone is read, so a press
- * can't arrive twice through the TrimUI's own controller underneath it */
+/* which map an event uses, or -1 to ignore it (not MustardOS's controller) */
 static int event_pad(SDL_JoystickID id)
 {
-    int muos = 0, kind = -1;
-    for (int i = 0; i < npads; i++) {
-        muos |= pads[i].kind != PAD_TRIMUI;
-        if (pads[i].id == id) kind = pads[i].kind;
-    }
-    if (kind < 0) return PAD_TRIMUI; /* not seen opening: as before */
-    return muos && kind == PAD_TRIMUI ? -1 : kind;
+    for (int i = 0; i < npads; i++)
+        if (pads[i].id == id) return pads[i].kind;
+    return -1;
 }
 
 static void open_joysticks(void)
@@ -3146,9 +3138,9 @@ static void open_joysticks(void)
         }
         int kind = pad_kind(j);
         if (npads < MAX_PADS) pads[npads].id = id, pads[npads].kind = kind, npads++;
-        fprintf(stderr, "controller %d: %s (%04x:%04x), %d buttons, %d axes, %d hats: %s buttons\n", i,
+        fprintf(stderr, "controller %d: %s (%04x:%04x), %d buttons, %d axes, %d hats: %s\n", i,
                 SDL_JoystickName(j), pad_vendor(j), pad_product(j), SDL_JoystickNumButtons(j), SDL_JoystickNumAxes(j),
-                SDL_JoystickNumHats(j), pad_names[kind]);
+                SDL_JoystickNumHats(j), kind >= 0 ? pad_names[kind] : "not read");
     }
 }
 
@@ -3183,18 +3175,9 @@ static float stick_value(int v)
     return a < 0.2f ? 0.0f : (x > 0 ? 1.0f : -1.0f) * fminf((a - 0.2f) / 0.75f, 1.0f);
 }
 
-static void on_axis(int role, int v, Uint32 now)
+static void on_axis(int role, int v)
 {
-    static int trig[2];
-    if (role == AX_L2 || role == AX_R2) { /* L2, R2: pressed past halfway, let go below a quarter */
-        int t = role == AX_R2;
-        int down = trig[t] ? v > 8192 : v > 16384;
-        if (down != trig[t]) {
-            trig[t] = down;
-            if (perf_level() == PERF_DETAIL) perf_log("INPUT", "%s %s (axis at %d)", t ? "R2" : "L2", down ? "down" : "up", v);
-            button(t ? B_R2 : B_L2, down, now);
-        }
-    } else if (role == AX_LX || role == AX_LY) { /* the left stick sweeps the stations: across A, up and down B */
+    if (role == AX_LX || role == AX_LY) { /* the left stick sweeps the stations: across A, up and down B */
         sweep[role == AX_LY] = stick_value(v);
         if (sweep[role == AX_LY] != 0.0f) leds_try(1, "a stick moved");
     } else if (role == AX_RX || role == AX_RY) { /* the right stick plays morph and the filter by hand */
@@ -3218,7 +3201,7 @@ static void on_event(const SDL_Event *e, Uint32 now)
         /* every press, raw and as read: for checking a firmware's numbering */
         if (perf_level() == PERF_DETAIL)
             perf_log("INPUT", "controller %d button %d %s: %s", (int)e->jbutton.which, b, down ? "down" : "up",
-                     pad < 0 ? "ignored (MustardOS's controller is read instead)" : m != B_NONE ? button_names[m] : "not used");
+                     pad < 0 ? "ignored (not MustardOS's controller)" : m != B_NONE ? button_names[m] : "not used");
         if (pad < 0) break;
         if (m != B_NONE && m < B_COUNT) button(m, down, now);
         else if (m == B_NONE && down) ev("button %d (not used)", b); /* worth knowing on a new firmware */
@@ -3235,7 +3218,7 @@ static void on_event(const SDL_Event *e, Uint32 now)
     case SDL_JOYAXISMOTION: {
         int pad = event_pad(e->jaxis.which);
         int role = pad >= 0 && e->jaxis.axis < PAD_AXES ? pad_axes[pad][e->jaxis.axis] : AX_NONE;
-        on_axis(role, e->jaxis.value, now);
+        on_axis(role, e->jaxis.value);
         break;
     }
     case SDL_JOYDEVICEADDED: open_joysticks(); break;
@@ -3544,7 +3527,7 @@ static int sync_sim(void)
 
 
 #ifndef RS_DEVICE
-/* --joytest: the TrimUI's buttons, hat, triggers and stick through SDL's virtual joystick, checked against what the
+/* --joytest: MustardOS's buttons, hat and sticks on a Brick Pro through SDL's virtual joystick, checked against what the
  * app does with them (desktop builds only: the device's SDL2 may be older than the virtual joystick) */
 static SDL_Joystick *jt;
 static void jt_pump(void)
@@ -3567,28 +3550,37 @@ static int joy_test(void)
     ui.screen = SCR_PLAY;
     ui.running = 1;
     joy_map_init();
-    int idx = SDL_JoystickAttachVirtual(SDL_JOYSTICK_TYPE_GAMECONTROLLER, 6, 11, 1);
+    /* MustardOS on a Brick Pro: its "muOS-Keys" controller (vendor "mu", product 3), numbered as MustardOS's
+     * tui-brick-pro map, L2 and R2 as buttons, the sticks as axes 0, 1 and 2, 3 */
+    SDL_VirtualJoystickDesc d;
+    SDL_zero(d);
+    d.version = SDL_VIRTUAL_JOYSTICK_DESC_VERSION;
+    d.type = SDL_JOYSTICK_TYPE_GAMECONTROLLER;
+    d.naxes = 4, d.nbuttons = 18, d.nhats = 1;
+    d.vendor_id = 0x756d, d.product_id = 3;
+    d.name = "muOS-Keys";
+    int idx = SDL_JoystickAttachVirtualEx(&d);
     jt = idx >= 0 ? SDL_JoystickOpen(idx) : NULL;
     if (!jt) { fprintf(stderr, "virtual joystick: %s\n", SDL_GetError()); return 1; }
-    jt_pump();
+    jt_pump(); /* the device arrives: opened and recognised */
     int ok = 1, r;
 #define JT_CHECK(what, cond) (r = (cond), ok &= r, printf("joy %s: %d\n", what, r))
     int was_running = synth_running(syn);
-    jt_button(7, 1), jt_button(7, 0);
-    JT_CHECK("START (7) tapped starts / stops", synth_running(syn) != was_running && ui.screen == SCR_PLAY);
-    jt_button(7, 1), jt_button(7, 0);
-    jt_button(7, 1), jt_button(5, 1), jt_button(5, 0);
+    jt_button(14, 1), jt_button(14, 0);
+    JT_CHECK("START (14) tapped starts / stops", synth_running(syn) != was_running && ui.screen == SCR_PLAY);
+    jt_button(14, 1), jt_button(14, 0);
+    jt_button(14, 1), jt_button(10, 1), jt_button(10, 0);
     JT_CHECK("START + R1 opens EDIT's first page", ui.screen == SCR_EDIT && ui.tab == 0 && ui.held[B_START]);
-    jt_button(4, 1), jt_button(4, 0), jt_button(7, 0);
+    jt_button(9, 1), jt_button(9, 0), jt_button(14, 0);
     JT_CHECK("START + L1 back to PLAY, without starting / stopping", ui.screen == SCR_PLAY && synth_running(syn) == was_running);
     ui.screen = SCR_EDIT;
     int tab = ui.tab;
-    jt_button(5, 1), jt_button(5, 0);
-    JT_CHECK("R1 (5) next page", ui.tab == (tab + 1) % TAB_COUNT);
-    jt_button(4, 1), jt_button(4, 0);
-    JT_CHECK("L1 (4) page back", ui.tab == tab);
+    jt_button(10, 1), jt_button(10, 0);
+    JT_CHECK("R1 (10) next page", ui.tab == (tab + 1) % TAB_COUNT);
+    jt_button(9, 1), jt_button(9, 0);
+    JT_CHECK("L1 (9) page back", ui.tab == tab);
     static const struct { int n, b; const char *what; } face[] = {
-        {0, B_B, "B (0)"}, {1, B_A, "A (1)"}, {2, B_Y, "Y (2)"}, {3, B_X, "X (3)"}, {6, B_SELECT, "SELECT (6)"}};
+        {5, B_B, "B (5)"}, {6, B_A, "A (6)"}, {8, B_Y, "Y (8)"}, {7, B_X, "X (7)"}, {13, B_SELECT, "SELECT (13)"}};
     ui.screen = SCR_PLAY;
     for (int i = 0; i < 5; i++) {
         jt_button(face[i].n, 1);
@@ -3596,7 +3588,7 @@ static int joy_test(void)
         jt_button(face[i].n, 0);
         JT_CHECK(face[i].what, held && !ui.held[face[i].b]);
     }
-    { /* F1 (9): new patterns, each rhythm still on or off; F2 (10): the dice on the sound */
+    { /* F1 (16): new patterns, each rhythm still on or off; F2 (17): the dice on the sound */
         float before[SEQ_COUNT][4], after_on[SEQ_COUNT];
         for (int q = 0; q < SEQ_COUNT; q++) {
             synth_set_param(syn, SEQ_PARAM(q, 0), (float)(q & 1));
@@ -3604,7 +3596,7 @@ static int joy_test(void)
         }
         int changed = 0, kept = 1;
         for (int t = 0; t < 4 && !changed; t++) { /* a roll can land on the same pattern; four in a row all can't */
-            jt_button(9, 1), jt_button(9, 0);
+            jt_button(16, 1), jt_button(16, 0);
             for (int q = 0; q < SEQ_COUNT; q++) {
                 after_on[q] = synth_get_param(syn, SEQ_PARAM(q, 0));
                 kept &= after_on[q] == before[q][0];
@@ -3612,10 +3604,10 @@ static int joy_test(void)
                 kept &= synth_get_param(syn, SEQ_PARAM(q, 2)) <= synth_get_param(syn, SEQ_PARAM(q, 1));
             }
         }
-        JT_CHECK("F1 (9) new patterns, on/off kept", changed && kept);
+        JT_CHECK("F1 (16) new patterns, on/off kept", changed && kept);
         float size_a = synth_get_param(syn, P_A_SIZE), size_b = synth_get_param(syn, P_B_SIZE);
-        jt_button(10, 1), jt_button(10, 0);
-        JT_CHECK("F2 (10) dice on the sound",
+        jt_button(17, 1), jt_button(17, 0);
+        JT_CHECK("F2 (17) dice on the sound",
                  synth_get_param(syn, P_A_SIZE) != size_a || synth_get_param(syn, P_B_SIZE) != size_b);
     }
     jt_hat(SDL_HAT_RIGHT);
@@ -3624,16 +3616,14 @@ static int joy_test(void)
     int both = ui.held[B_RIGHT] && ui.held[B_UP];
     jt_hat(SDL_HAT_CENTERED);
     JT_CHECK("d-pad hat", right && both && !ui.held[B_RIGHT] && !ui.held[B_UP]);
-    jt_axis(2, 32767);
+    jt_button(11, 1);
     int l2 = ui.held[B_L2];
-    jt_axis(2, 12000); /* past a quarter: still down */
-    l2 &= ui.held[B_L2];
-    jt_axis(2, -32768);
-    JT_CHECK("L2 (axis 2)", l2 && !ui.held[B_L2]);
-    jt_axis(5, 32767);
+    jt_button(11, 0);
+    JT_CHECK("L2 (11)", l2 && !ui.held[B_L2]);
+    jt_button(12, 1);
     int r2 = ui.held[B_R2];
-    jt_axis(5, 0);
-    JT_CHECK("R2 (axis 5)", r2 && !ui.held[B_R2]);
+    jt_button(12, 0);
+    JT_CHECK("R2 (12)", r2 && !ui.held[B_R2]);
     jt_axis(0, 32767);
     int sa = sweep[0] == 1.0f && !ui.held[B_RIGHT]; /* the stick sweeps; it is no longer a d-pad */
     jt_axis(1, -32767);
@@ -3648,81 +3638,54 @@ static int joy_test(void)
         static float in0[512 * 2], out0[512 * 2];
         synth_set_param(syn, P_MORPH, 0.25f);
         synth_set_param(syn, P_TONE, 0);
-        jt_axis(3, 32767), jt_axis(4, -32767);
+        jt_axis(2, 32767), jt_axis(3, -32767);
         rstick_apply();
         audio_lock();
         for (int i = 0; i < 40; i++) synth_process(syn, in0, in0, out0, 512);
         float m1 = synth_played_param(syn, P_MORPH), t1 = synth_played_param(syn, P_TONE);
-        jt_axis(3, 0), jt_axis(4, 0);
+        jt_axis(2, 0), jt_axis(3, 0);
         rstick_apply();
         for (int i = 0; i < 40; i++) synth_process(syn, in0, in0, out0, 512);
         float m0 = synth_played_param(syn, P_MORPH), t0 = synth_played_param(syn, P_TONE);
         audio_unlock();
-        JT_CHECK("right stick (3, 4) morphs to B and opens the filter, then springs back",
+        JT_CHECK("right stick (2, 3) morphs to B and opens the filter, then springs back",
                  m1 > 0.99f && t1 > 0.99f && fabsf(m0 - 0.25f) < 1e-3f && fabsf(t0) < 1e-3f &&
                      synth_get_param(syn, P_MORPH) == 0.25f && synth_get_param(syn, P_TONE) == 0);
         synth_set_param(syn, P_MORPH, 0);
     }
-    jt_button(8, 1), jt_button(8, 0);
+    jt_button(15, 1), jt_button(15, 0);
     int running = ui.running;
-    jt_button(8, 1), jt_button(8, 0);
-    JT_CHECK("MENU (8) twice quits", running && !ui.running);
+    jt_button(15, 1), jt_button(15, 0);
+    JT_CHECK("MENU (15) twice quits", running && !ui.running);
     setenv("RS_JOYMAP", "A=0,B=1", 1);
     joy_map_init();
     ui.screen = SCR_PLAY;
     jt_button(0, 1);
     int a = ui.held[B_A];
     jt_button(0, 0);
-    JT_CHECK("RS_JOYMAP=A=0,B=1", a && joy_map[PAD_TRIMUI][1] == B_B);
+    JT_CHECK("RS_JOYMAP=A=0,B=1", a && joy_map[PAD_MUOS_BRICKPRO][1] == B_B);
 
-    /* MustardOS on a Brick Pro: its "muOS-Keys" controller (vendor "mu", product 3) beside the TrimUI's own,
-     * numbered as MustardOS's tui-brick-pro map, L2 and R2 as buttons; the TrimUI's controller is then ignored */
+    /* any other controller (the TrimUI's own one under MustardOS's) is not read, or a press would arrive twice */
     unsetenv("RS_JOYMAP");
     joy_map_init();
-    open_joysticks(); /* the TrimUI's, as the app opens it at start */
-    SDL_VirtualJoystickDesc d;
-    SDL_zero(d);
-    d.version = SDL_VIRTUAL_JOYSTICK_DESC_VERSION;
-    d.type = SDL_JOYSTICK_TYPE_GAMECONTROLLER;
-    d.naxes = 4, d.nbuttons = 18, d.nhats = 1;
-    d.vendor_id = 0x756d, d.product_id = 3;
-    d.name = "muOS-Keys";
-    int midx = SDL_JoystickAttachVirtualEx(&d);
-    jt_pump(); /* the device arrives: opened and recognised */
-    SDL_Joystick *mj = NULL;
-    for (int i = 0; i < npads; i++)
-        if (pads[i].kind == PAD_MUOS_BRICKPRO) mj = SDL_JoystickFromInstanceID(pads[i].id);
-    JT_CHECK("MustardOS's controller found (Brick Pro)", mj != NULL);
-    if (mj) {
-        static const struct { int n, b; const char *what; } mux[] = {
-            {6, B_A, "MustardOS A (6)"}, {5, B_B, "MustardOS B (5)"}, {11, B_L2, "MustardOS L2 (11)"},
-            {12, B_R2, "MustardOS R2 (12)"}, {13, B_SELECT, "MustardOS SELECT (13)"}};
+    int oidx = SDL_JoystickAttachVirtual(SDL_JOYSTICK_TYPE_GAMECONTROLLER, 6, 11, 1);
+    SDL_Joystick *oj = oidx >= 0 ? SDL_JoystickOpen(oidx) : NULL;
+    jt_pump();
+    int twice = 0;
+    if (oj) {
         ui.screen = SCR_PLAY;
-        for (int i = 0; i < 5; i++) {
-            SDL_JoystickSetVirtualButton(mj, mux[i].n, 1), jt_pump();
-            int held = ui.held[mux[i].b];
-            SDL_JoystickSetVirtualButton(mj, mux[i].n, 0), jt_pump();
-            JT_CHECK(mux[i].what, held && !ui.held[mux[i].b]);
-        }
-        SDL_JoystickSetVirtualAxis(mj, 1, -32767), jt_pump();
-        int mup = sweep[1] == -1.0f && !ui.held[B_UP];
-        SDL_JoystickSetVirtualAxis(mj, 1, 0), jt_pump();
-        SDL_JoystickSetVirtualAxis(mj, 2, 32767), jt_pump();
-        int mrx = rstick[0] == 1.0f;
-        SDL_JoystickSetVirtualAxis(mj, 2, 0), jt_pump();
-        JT_CHECK("MustardOS left stick (axis 1) sweeps, right stick (axis 2) plays",
-                 mup && sweep[1] == 0.0f && mrx && rstick[0] == 0.0f);
-        jt_button(1, 1); /* the TrimUI's A underneath: ignored, or a press would arrive twice */
-        int twice = ui.held[B_A];
-        jt_button(1, 0);
-        JT_CHECK("the TrimUI's controller ignored under MustardOS's", !twice);
-        /* the lit buttons under the screen are MustardOS's 0 and 1; 2 and 3 are volume, not F1 / F2 */
-        JT_CHECK("MustardOS F1 (0), F2 (1); volume (2, 3) left alone",
-                 joy_map[PAD_MUOS_BRICKPRO][0] == B_F1 && joy_map[PAD_MUOS_BRICKPRO][1] == B_F2 &&
-                     joy_map[PAD_MUOS_BRICKPRO][2] == B_NONE && joy_map[PAD_MUOS_BRICKPRO][3] == B_NONE);
+        SDL_JoystickSetVirtualButton(oj, 1, 1), jt_pump();
+        twice = ui.held[B_A];
+        SDL_JoystickSetVirtualButton(oj, 1, 0), jt_pump();
     }
+    JT_CHECK("another controller ignored", oj != NULL && !twice);
+    /* the lit buttons under the screen are MustardOS's 0 and 1; 2 and 3 are volume, not F1 / F2 */
+    JT_CHECK("MustardOS F1 (0), F2 (1); volume (2, 3) left alone",
+             joy_map[PAD_MUOS_BRICKPRO][0] == B_F1 && joy_map[PAD_MUOS_BRICKPRO][1] == B_F2 &&
+                 joy_map[PAD_MUOS_BRICKPRO][2] == B_NONE && joy_map[PAD_MUOS_BRICKPRO][3] == B_NONE);
     printf("joytest: %s\n", ok ? "all good" : "FAILED");
-    SDL_JoystickDetachVirtual(midx);
+    if (oj) SDL_JoystickClose(oj);
+    SDL_JoystickDetachVirtual(oidx);
     SDL_JoystickClose(jt);
     SDL_JoystickDetachVirtual(idx);
     SDL_Quit();
@@ -4371,9 +4334,7 @@ int main(int argc, char **argv)
         open_joysticks();
         int brickpro = 0;
         for (int i = 0; i < npads; i++) brickpro |= pads[i].kind == PAD_MUOS_BRICKPRO;
-        const char *model = getenv("TRIMUI_MODEL");
-        if (!brickpro && model && strcasestr(model, "brick") && strcasestr(model, "pro")) brickpro = 2;
-        leds_try(brickpro, brickpro == 2 ? "TRIMUI_MODEL" : brickpro ? "MustardOS's Brick Pro controller" : "RS_LED_FRAME");
+        leds_try(brickpro, brickpro ? "MustardOS's Brick Pro controller" : "RS_LED_FRAME");
     }
 
     audio_rate = getenv("RS_RATE") ? atoi(getenv("RS_RATE")) : 48000;

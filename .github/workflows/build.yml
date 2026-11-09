@@ -54,7 +54,7 @@ jobs:
           # (the self-updater needs the CA bundle for HTTPS, and VERSION for install.sh)
           m=build/RadioScan-mustardos.muxapp
           ls -l $m
-          for f in radioscan launch.sh config.json mux_launch.sh wake_screen.sh sysinfo.sh glyph/radioscan.svg cacert.pem stations.txt; do
+          for f in radioscan launch.sh mux_launch.sh wake_screen.sh sysinfo.sh glyph/radioscan.svg cacert.pem stations.txt; do
             unzip -l $m | grep -q "RadioScan/$f$" || { echo "::error::$m has no $f"; exit 1; }
           done
           test "$(unzip -p $m RadioScan/VERSION)" = "$(make -s version "$@")"
