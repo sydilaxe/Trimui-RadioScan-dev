@@ -14,6 +14,10 @@ MustardOS is built for: no TrimUI OS or Knulli packages. `make desktop` builds
 for this computer against the system SDL2; CI runs its tests (`.github/workflows/build.yml`). Without zig on the
 path, `pip install ziglang==0.14.1`.
 
+`mux_launch.sh` holds MustardOS's idle off while the app is open (its Idle Mute would stop the sound two
+minutes after the last press): `idle_inhibit` re-set every 2 s and `caffeine`, given back on exit. The block
+is the same in Jaffedrone, Columbia Street, HI5, RadioScan and Conduit; keep the copies the same.
+
 The platform layer lives in `src/main.c` (the screen, input and sound device sections and `main`): the 640x480
 pages are drawn into a software surface as on the Miyoo and scaled to the screen with an SDL2 renderer; the TrimUI's
 buttons come in as MustardOS's "muOS-Keys" joystick (any other controller is ignored), with the Brick or
